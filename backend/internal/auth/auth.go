@@ -125,24 +125,36 @@ func Bearer(r *http.Request) string {
 	return ""
 }
 
-func SetSessionCookie(w http.ResponseWriter, token string) {
-	http.SetCookie(w, &http.Cookie{
+func SetSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
+	http.SetCookie(w, sessionCookie(r, token, SessionTTL))
+}
+
+func ClearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, sessionCookie(r, "", -1))
+}
+
+func sessionCookie(r *http.Request, token string, maxAge int) *http.Cookie {
+	return &http.Cookie{
 		Name:     CookieName,
 		Value:    token,
 		Path:     "/",
-		MaxAge:   SessionTTL,
+		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-	})
+		Secure:   forwardedHTTPS(r),
+	}
 }
 
-func ClearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     CookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+func forwardedHTTPS(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if i := strings.IndexByte(proto, ','); i >= 0 {
+		proto = proto[:i]
+	}
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }

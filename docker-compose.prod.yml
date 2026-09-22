@@ -1,0 +1,61 @@
+name: pvmoney
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pvmoney
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pvmoney}
+      POSTGRES_DB: pvmoney
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pvmoney -d pvmoney"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  backend:
+    image: pvmoney-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://pvmoney:${POSTGRES_PASSWORD:-pvmoney}@db:5432/pvmoney?sslmode=disable
+      PORT: "8080"
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://pvmoney.gowin.ir}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    ports:
+      - "127.0.0.1:8083:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    image: pvmoney-frontend
+    build:
+      context: ./frontend
+      args:
+        API_URL: http://backend:8080
+    environment:
+      API_URL: http://backend:8080
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "127.0.0.1:3011:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -350,7 +350,7 @@ func (s *Server) verifyCode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	auth.SetSessionCookie(w, token)
+	auth.SetSessionCookie(w, r, token)
 	if s.bot != nil {
 		go func() {
 			_ = s.bot.Welcome(context.Background())
@@ -423,6 +423,6 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if tok := auth.Bearer(r); tok != "" {
 		_ = s.store.DeleteSession(r.Context(), auth.Hash(tok))
 	}
-	auth.ClearSessionCookie(w)
+	auth.ClearSessionCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "logged_out"})
 }

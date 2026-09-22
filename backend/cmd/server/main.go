@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"pvmoney/internal/api"
@@ -41,7 +42,7 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{origin, "http://localhost:3000", "http://127.0.0.1:3000"},
+		AllowedOrigins:   corsOrigins(origin),
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Content-Type", "Authorization"},
 		AllowCredentials: true,
@@ -59,4 +60,24 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func corsOrigins(raw string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, 6)
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			return
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	for _, p := range strings.Split(raw, ",") {
+		add(p)
+	}
+	add("http://localhost:3000")
+	add("http://127.0.0.1:3000")
+	add("https://pvmoney.gowin.ir")
+	return out
 }
