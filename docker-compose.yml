@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pvmoney
+      POSTGRES_PASSWORD: pvmoney
+      POSTGRES_DB: pvmoney
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pvmoney -d pvmoney"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build: ./backend
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://pvmoney:pvmoney@db:5432/pvmoney?sslmode=disable
+      PORT: "8080"
+      CORS_ORIGIN: http://localhost:3000
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        API_URL: http://backend:8080
+    ports:
+      - "3000:3000"
+    environment:
+      API_URL: http://backend:8080
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
