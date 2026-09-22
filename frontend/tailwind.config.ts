@@ -5,8 +5,8 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Vazirmatn", "system-ui", "sans-serif"],
-        display: ["Vazirmatn", "system-ui", "sans-serif"],
+        sans: ["var(--font-app)"],
+        display: ["var(--font-app)"],
       },
       colors: {
         ink: {

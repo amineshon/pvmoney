@@ -1,14 +1,10 @@
-FROM golang:1.23-alpine AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/server ./cmd/server
+FROM pvmoney-backend:latest AS certs
 
-FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata
+FROM alpine:latest
+COPY --from=certs /etc/ssl/certs /etc/ssl/certs
+COPY --from=certs /usr/share/zoneinfo /usr/share/zoneinfo
 ENV TZ=Asia/Tehran
-COPY --from=build /out/server /server
+COPY server /server
 EXPOSE 8080
 USER nobody
 CMD ["/server"]

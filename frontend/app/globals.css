@@ -5,6 +5,13 @@
 :root {
   --gold: #e0c36a;
   --line: rgba(224, 195, 106, 0.14);
+  --font-app: var(--font-iran-yekan), Tahoma, Arial, sans-serif;
+}
+
+html[lang="en"],
+html[lang="de"],
+html.ltr {
+  --font-app: var(--font-gilroy), system-ui, sans-serif;
 }
 
 html,
@@ -16,12 +23,8 @@ body {
 body {
   background: #07080c;
   color: #f4f0e6;
+  font-family: var(--font-app);
   font-feature-settings: "ss01";
-}
-
-html[lang="en"] body,
-html[lang="de"] body {
-  font-family: Inter, system-ui, sans-serif;
 }
 
 * {
