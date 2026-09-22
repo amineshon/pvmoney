@@ -98,21 +98,28 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		return
 	}
 	chat := u.Message.Chat.ID
-	if !b.allow(ctx, chat) {
+	if u.Message.Contact != nil {
+		b.handleContact(ctx, chat, u.Message)
 		return
 	}
 	text := strings.TrimSpace(u.Message.Text)
+	if b.handleAuthStart(ctx, chat, text) {
+		return
+	}
+	if !b.allow(ctx, chat) {
+		_ = b.sendTo(chat, tr("fa", "auth.needApp"), nil, false)
+		return
+	}
 	b.onMessage(ctx, chat, text)
 }
 
 func (b *Bot) allow(ctx context.Context, chat int64) bool {
-	saved, _ := b.store.GetSetting(ctx, "telegram_chat_id")
 	id := strconv.FormatInt(chat, 10)
-	if saved == "" {
-		_ = b.store.SetSetting(ctx, "telegram_chat_id", id)
+	if u, err := b.store.UserByChatID(ctx, id); err == nil && u.TelegramVerified {
 		return true
 	}
-	return saved == id
+	saved, _ := b.store.GetSetting(ctx, "telegram_chat_id")
+	return saved != "" && saved == id
 }
 
 func (b *Bot) get(chat int64) *session {
@@ -150,6 +157,7 @@ type tgResp struct {
 }
 
 type tgUser struct {
+	ID       int64  `json:"id"`
 	Username string `json:"username"`
 }
 
@@ -157,10 +165,18 @@ type tgChat struct {
 	ID int64 `json:"id"`
 }
 
+type tgContact struct {
+	PhoneNumber string `json:"phone_number"`
+	FirstName   string `json:"first_name"`
+	UserID      int64  `json:"user_id"`
+}
+
 type tgMessage struct {
-	MessageID int    `json:"message_id"`
-	Text      string `json:"text"`
-	Chat      tgChat `json:"chat"`
+	MessageID int        `json:"message_id"`
+	Text      string     `json:"text"`
+	Chat      tgChat     `json:"chat"`
+	From      *tgUser    `json:"from"`
+	Contact   *tgContact `json:"contact"`
 }
 
 type tgCallback struct {
@@ -213,36 +229,91 @@ func (b *Bot) setCommands() error {
 	}, nil)
 }
 
+func (b *Bot) destChats(ctx context.Context) []int64 {
+	ids, err := b.store.VerifiedChatIDs(ctx)
+	out := make([]int64, 0, 2)
+	seen := map[int64]bool{}
+	add := func(raw string) {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id == 0 || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if err == nil {
+		for _, id := range ids {
+			add(id)
+		}
+	}
+	if saved, e := b.store.GetSetting(ctx, "telegram_chat_id"); e == nil {
+		add(saved)
+	}
+	return out
+}
+
 func (b *Bot) Send(ctx context.Context, text string) error {
-	chat, err := b.store.GetSetting(ctx, "telegram_chat_id")
-	if err != nil || chat == "" {
+	chats := b.destChats(ctx)
+	if len(chats) == 0 {
 		return fmt.Errorf("no chat id")
 	}
-	id, _ := strconv.ParseInt(chat, 10, 64)
+	var last error
+	ok := false
+	for _, id := range chats {
+		if err := b.sendTo(id, text, nil, false); err != nil {
+			last = err
+			continue
+		}
+		ok = true
+	}
+	if ok {
+		return nil
+	}
+	return last
+}
+
+func (b *Bot) SendTo(_ context.Context, chatID, text string) error {
+	id, err := strconv.ParseInt(chatID, 10, 64)
+	if err != nil || id == 0 {
+		return fmt.Errorf("no chat id")
+	}
 	return b.sendTo(id, text, nil, false)
 }
 
 func (b *Bot) Welcome(ctx context.Context) error {
-	chat, err := b.store.GetSetting(ctx, "telegram_chat_id")
-	if err != nil || chat == "" {
+	chats := b.destChats(ctx)
+	if len(chats) == 0 {
 		return fmt.Errorf("no chat id")
 	}
-	id, _ := strconv.ParseInt(chat, 10, 64)
-	return b.sendHome(ctx, id, 0, true)
+	var last error
+	for _, id := range chats {
+		if err := b.sendHome(ctx, id, 0, true); err != nil {
+			last = err
+		}
+	}
+	return last
 }
 
-func (b *Bot) sendTo(chat int64, text string, inline [][]btn, withKB bool) error {
+func (b *Bot) sendMarkup(chat int64, text string, markup any) error {
 	payload := map[string]any{
 		"chat_id":                  chat,
 		"text":                     text,
 		"disable_web_page_preview": true,
 	}
-	if inline != nil {
-		payload["reply_markup"] = inlineMarkup(inline)
-	} else if withKB {
-		payload["reply_markup"] = b.replyKeyboard()
+	if markup != nil {
+		payload["reply_markup"] = markup
 	}
 	return b.call("sendMessage", payload, nil)
+}
+
+func (b *Bot) sendTo(chat int64, text string, inline [][]btn, withKB bool) error {
+	var markup any
+	if inline != nil {
+		markup = inlineMarkup(inline)
+	} else if withKB {
+		markup = b.replyKeyboard()
+	}
+	return b.sendMarkup(chat, text, markup)
 }
 
 func (b *Bot) show(chat int64, msgID int, text string, inline [][]btn) {

@@ -241,7 +241,36 @@ type DebtInput struct {
 }
 
 type Settings struct {
-	TelegramChatID   string `json:"telegram_chat_id"`
-	TelegramConnected bool  `json:"telegram_connected"`
-	BotUsername      string `json:"bot_username"`
+	TelegramChatID    string `json:"telegram_chat_id"`
+	TelegramConnected bool   `json:"telegram_connected"`
+	BotUsername       string `json:"bot_username"`
+}
+
+type User struct {
+	ID                string     `json:"id"`
+	Username          string     `json:"username"`
+	TelegramPhone     string     `json:"telegram_phone"`
+	TelegramChatID    string     `json:"telegram_chat_id,omitempty"`
+	TelegramVerified  bool       `json:"telegram_verified"`
+	CreatedAt         time.Time  `json:"created_at"`
+	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
+}
+
+type AuthChallenge struct {
+	ID             string
+	Purpose        string
+	UserID         string
+	Username       string
+	TelegramPhone  string
+	Lang           string
+	LinkToken      string
+	OTPHash        string
+	OTPExpiresAt   *time.Time
+	ChatID         string
+	PhoneFromTG    string
+	Status         string
+	Attempts       int
+	OTPSentAt      *time.Time
+	ExpiresAt      time.Time
+	CreatedAt      time.Time
 }

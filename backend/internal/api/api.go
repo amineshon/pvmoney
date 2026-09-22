@@ -18,6 +18,7 @@ import (
 
 type TelegramSender interface {
 	Send(ctx context.Context, text string) error
+	SendTo(ctx context.Context, chatID, text string) error
 	OnAppEvent(ctx context.Context, ev notify.Event)
 	Welcome(ctx context.Context) error
 }
@@ -33,48 +34,60 @@ func New(s *store.Store, bot TelegramSender) http.Handler {
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	r.Get("/api/dashboard", api.dashboard)
 
-	r.Get("/api/accounts", api.listAccounts)
-	r.Post("/api/accounts", api.createAccount)
-	r.Get("/api/accounts/{id}", api.getAccount)
-	r.Put("/api/accounts/{id}", api.updateAccount)
-	r.Delete("/api/accounts/{id}", api.deleteAccount)
-	r.Post("/api/accounts/{id}/adjust", api.adjustAccount)
+	r.Get("/api/auth/status", api.authStatus)
+	r.Post("/api/auth/register/start", api.registerStart)
+	r.Get("/api/auth/challenge/{id}", api.challengeStatus)
+	r.Post("/api/auth/login/start", api.loginStart)
+	r.Post("/api/auth/verify", api.verifyCode)
+	r.Post("/api/auth/resend", api.resendCode)
+	r.Post("/api/auth/logout", api.logout)
 
-	r.Get("/api/projects", api.listProjects)
-	r.Post("/api/projects", api.createProject)
-	r.Get("/api/projects/{id}", api.getProject)
-	r.Put("/api/projects/{id}", api.updateProject)
-	r.Delete("/api/projects/{id}", api.deleteProject)
-	r.Post("/api/projects/{id}/contribute", api.contribute)
-	r.Post("/api/projects/{id}/withdraw", api.withdraw)
-	r.Post("/api/projects/{id}/convert-asset", api.convertAsset)
-	r.Post("/api/projects/{id}/items", api.createItem)
-	r.Put("/api/projects/{id}/items/{itemId}", api.updateItem)
-	r.Delete("/api/projects/{id}/items/{itemId}", api.deleteItem)
-	r.Post("/api/projects/{id}/items/{itemId}/pay", api.payItem)
+	r.Group(func(r chi.Router) {
+		r.Use(api.requireAuth)
+		r.Get("/api/dashboard", api.dashboard)
 
-	r.Get("/api/assets", api.listAssets)
-	r.Post("/api/assets", api.createAsset)
-	r.Put("/api/assets/{id}", api.updateAsset)
-	r.Delete("/api/assets/{id}", api.deleteAsset)
+		r.Get("/api/accounts", api.listAccounts)
+		r.Post("/api/accounts", api.createAccount)
+		r.Get("/api/accounts/{id}", api.getAccount)
+		r.Put("/api/accounts/{id}", api.updateAccount)
+		r.Delete("/api/accounts/{id}", api.deleteAccount)
+		r.Post("/api/accounts/{id}/adjust", api.adjustAccount)
 
-	r.Get("/api/transactions", api.listTransactions)
-	r.Post("/api/transactions", api.createTransaction)
-	r.Delete("/api/transactions/{id}", api.deleteTransaction)
+		r.Get("/api/projects", api.listProjects)
+		r.Post("/api/projects", api.createProject)
+		r.Get("/api/projects/{id}", api.getProject)
+		r.Put("/api/projects/{id}", api.updateProject)
+		r.Delete("/api/projects/{id}", api.deleteProject)
+		r.Post("/api/projects/{id}/contribute", api.contribute)
+		r.Post("/api/projects/{id}/withdraw", api.withdraw)
+		r.Post("/api/projects/{id}/convert-asset", api.convertAsset)
+		r.Post("/api/projects/{id}/items", api.createItem)
+		r.Put("/api/projects/{id}/items/{itemId}", api.updateItem)
+		r.Delete("/api/projects/{id}/items/{itemId}", api.deleteItem)
+		r.Post("/api/projects/{id}/items/{itemId}/pay", api.payItem)
 
-	r.Get("/api/debts", api.listDebts)
-	r.Post("/api/debts", api.createDebt)
-	r.Get("/api/debts/{id}", api.getDebt)
-	r.Put("/api/debts/{id}", api.updateDebt)
-	r.Delete("/api/debts/{id}", api.deleteDebt)
-	r.Post("/api/debts/{id}/pay", api.payDebt)
-	r.Post("/api/debts/{id}/installments/{instId}/pay", api.payInstallment)
+		r.Get("/api/assets", api.listAssets)
+		r.Post("/api/assets", api.createAsset)
+		r.Put("/api/assets/{id}", api.updateAsset)
+		r.Delete("/api/assets/{id}", api.deleteAsset)
 
-	r.Get("/api/telegram", api.telegramStatus)
-	r.Post("/api/telegram/test", api.telegramTest)
-	r.Get("/api/rates", api.rates)
+		r.Get("/api/transactions", api.listTransactions)
+		r.Post("/api/transactions", api.createTransaction)
+		r.Delete("/api/transactions/{id}", api.deleteTransaction)
+
+		r.Get("/api/debts", api.listDebts)
+		r.Post("/api/debts", api.createDebt)
+		r.Get("/api/debts/{id}", api.getDebt)
+		r.Put("/api/debts/{id}", api.updateDebt)
+		r.Delete("/api/debts/{id}", api.deleteDebt)
+		r.Post("/api/debts/{id}/pay", api.payDebt)
+		r.Post("/api/debts/{id}/installments/{instId}/pay", api.payInstallment)
+
+		r.Get("/api/telegram", api.telegramStatus)
+		r.Post("/api/telegram/test", api.telegramTest)
+		r.Get("/api/rates", api.rates)
+	})
 	return r
 }
 
@@ -555,6 +568,12 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "insufficient"})
 	case errors.Is(err, store.ErrInvalid):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	case errors.Is(err, store.ErrUnauthorized):
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	case errors.Is(err, store.ErrConflict):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+	case errors.Is(err, store.ErrTooMany):
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_attempts"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}

@@ -154,6 +154,48 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_inst_due ON debt_installments (due_date, status);
+
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY,
+  username TEXT NOT NULL,
+  telegram_phone TEXT NOT NULL DEFAULT '',
+  telegram_chat_id TEXT NOT NULL DEFAULT '',
+  telegram_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_login_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users (telegram_phone) WHERE telegram_phone <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_chat ON users (telegram_chat_id) WHERE telegram_chat_id <> '';
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
+
+CREATE TABLE IF NOT EXISTS auth_challenges (
+  id UUID PRIMARY KEY,
+  purpose TEXT NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  username TEXT NOT NULL DEFAULT '',
+  telegram_phone TEXT NOT NULL DEFAULT '',
+  lang TEXT NOT NULL DEFAULT 'fa',
+  link_token TEXT NOT NULL UNIQUE,
+  otp_hash TEXT NOT NULL DEFAULT '',
+  otp_expires_at TIMESTAMPTZ,
+  chat_id TEXT NOT NULL DEFAULT '',
+  phone_from_tg TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending_start',
+  attempts INT NOT NULL DEFAULT 0,
+  otp_sent_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_challenges_status ON auth_challenges (status, expires_at);
 `)
 	if err != nil {
 		return err

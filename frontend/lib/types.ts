@@ -112,6 +112,33 @@ export type TelegramStatus = {
   bot_username: string;
 };
 
+export type AuthUser = {
+  id: string;
+  username: string;
+  telegram_phone: string;
+  telegram_verified: boolean;
+  telegram_connected: boolean;
+};
+
+export type AuthStatus = {
+  authenticated: boolean;
+  mode: "register" | "login";
+  has_users: boolean;
+  bot_username: string;
+  bot_ready: boolean;
+  user?: AuthUser;
+};
+
+export type AuthChallenge = {
+  id: string;
+  status: "pending_start" | "waiting_contact" | "phone_mismatch" | "otp_sent" | "consumed" | string;
+  purpose: string;
+  bot_link?: string;
+  bot_username?: string;
+  phone_masked?: string;
+  expires_in: number;
+};
+
 export type Dashboard = {
   net_worth: number;
   liquid: number;

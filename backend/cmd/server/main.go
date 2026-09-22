@@ -43,8 +43,8 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{origin, "http://localhost:3000", "http://127.0.0.1:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Content-Type"},
-		AllowCredentials: false,
+		AllowedHeaders:   []string{"Accept", "Content-Type", "Authorization"},
+		AllowCredentials: true,
 	}))
 	r.Mount("/", api.New(st, tg))
 

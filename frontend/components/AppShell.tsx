@@ -14,10 +14,12 @@ import {
   HandCoins,
   MoreHorizontal,
   Languages,
+  LogOut,
 } from "lucide-react";
 import { useState } from "react";
 import { QuickTxModal } from "./QuickTxModal";
 import { LOCALES, useI18n } from "@/lib/i18n";
+import { useAuth } from "@/lib/auth";
 
 const NAV = [
   { href: "/", key: "nav.dashboard", icon: LayoutDashboard },
@@ -36,6 +38,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [more, setMore] = useState(false);
   const { t, locale, setLocale } = useI18n();
+  const { user, logout } = useAuth();
   const moreActive = MORE_HREFS.some((href) => path.startsWith(href));
 
   return (
@@ -117,6 +120,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Plus className="h-4 w-4" />
             {t("common.quickTx")}
           </button>
+          {user && (
+            <div className="mt-4 flex items-center justify-between gap-2 rounded-2xl bg-white/5 px-3 py-2">
+              <div className="min-w-0">
+                <div className="truncate text-xs font-bold text-white/80">{user.username}</div>
+                <div className="text-[10px] text-white/35">{t("auth.signedIn")}</div>
+              </div>
+              <button
+                onClick={() => logout()}
+                className="rounded-xl p-2 text-white/40 hover:bg-white/10 hover:text-rose-300"
+                aria-label={t("auth.logout")}
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
@@ -165,6 +183,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </button>
               ))}
             </div>
+            <button
+              onClick={() => logout()}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white/5 py-3 text-sm text-white/60"
+            >
+              <LogOut className="h-4 w-4" />
+              {t("auth.logout")}
+            </button>
           </div>
         </div>
       )}

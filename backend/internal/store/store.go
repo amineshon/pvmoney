@@ -15,9 +15,12 @@ import (
 )
 
 var (
-	ErrNotFound     = errors.New("not found")
-	ErrInsufficient = errors.New("insufficient balance")
-	ErrInvalid      = errors.New("invalid request")
+	ErrNotFound      = errors.New("not found")
+	ErrInsufficient  = errors.New("insufficient balance")
+	ErrInvalid       = errors.New("invalid request")
+	ErrUnauthorized  = errors.New("unauthorized")
+	ErrConflict      = errors.New("conflict")
+	ErrTooMany       = errors.New("too_many_attempts")
 )
 
 type Store struct {
