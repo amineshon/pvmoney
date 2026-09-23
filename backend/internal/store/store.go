@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"pvmoney/internal/models"
+	"pvmoney/internal/rates"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -786,10 +787,18 @@ SELECT account_id, to_account_id, project_id, item_id, type, amount FROM transac
 func (s *Store) Dashboard(ctx context.Context) (models.Dashboard, error) {
 	var d models.Dashboard
 	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(balance),0), COUNT(*) FROM accounts`).Scan(&d.Liquid, &d.AccountCount)
-	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(value),0) FROM assets`).Scan(&d.AssetsTotal)
 	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(current_amount),0), COUNT(*) FILTER (WHERE status='active') FROM projects`).Scan(&d.ProjectSpend, &d.ProjectCount)
-	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(remaining),0) FROM debts WHERE status='active'`).Scan(&d.DebtsRemaining)
-	d.NetWorth = d.Liquid + d.AssetsTotal - d.DebtsRemaining
+	_ = s.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(
+  CASE
+    WHEN has_schedule THEN COALESCE((
+      SELECT SUM(i.amount) FROM debt_installments i
+      WHERE i.debt_id = d.id AND i.status = 'pending'
+    ), 0)
+    ELSE remaining
+  END
+), 0)
+FROM debts d WHERE status='active'`).Scan(&d.DebtsRemaining)
 
 	_ = s.db.QueryRowContext(ctx, `
 SELECT COALESCE(SUM(amount),0) FROM transactions
@@ -813,6 +822,8 @@ WHERE type IN ('expense','contribution') AND account_id IS NOT NULL AND occurred
 		return d, err
 	}
 	d.Assets = assets
+	d.AssetsTotal = liveAssetsTotal(ctx, assets)
+	d.NetWorth = d.Liquid + d.AssetsTotal - d.DebtsRemaining
 	upcoming, err := s.UpcomingInstallments(ctx, 6)
 	if err != nil {
 		return d, err
@@ -893,6 +904,22 @@ GROUP BY 1 ORDER BY 1`)
 	}
 	mrows.Close()
 	return d, nil
+}
+
+func liveAssetsTotal(ctx context.Context, assets []models.Asset) int64 {
+	var book int64
+	for _, a := range assets {
+		book += a.Value
+	}
+	r, err := rates.Get(ctx)
+	if err != nil {
+		return book
+	}
+	var live int64
+	for _, a := range assets {
+		live += rates.AssetValue(a.Type, a.Quantity, a.Value, &r)
+	}
+	return live
 }
 
 func changeBalance(ctx context.Context, tx *sql.Tx, accountID string, delta int64) error {

@@ -220,7 +220,73 @@ WHERE unit_value > 10000000000000 OR value > 10000000000000;
 	if err != nil {
 		return err
 	}
-	return repairOrphanedAccountHistory(database)
+	if err := repairOrphanedAccountHistory(database); err != nil {
+		return err
+	}
+	return rebuildLedgers(database)
+}
+
+func rebuildLedgers(database *sql.DB) error {
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`INSERT INTO app_settings (key, value) VALUES ('ledger_rebuild_v1', '1') ON CONFLICT (key) DO NOTHING`)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil
+	}
+
+	if _, err := tx.Exec(`
+UPDATE debts SET
+  total_amount = LEAST(GREATEST(total_amount, 0), 10000000000000),
+  remaining = LEAST(GREATEST(remaining, 0), 10000000000000),
+  monthly_amount = LEAST(GREATEST(monthly_amount, 0), 10000000000000),
+  commission_amount = LEAST(GREATEST(commission_amount, 0), 10000000000000)`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+UPDATE debts d SET remaining = COALESCE((
+  SELECT SUM(amount) FROM debt_installments i
+  WHERE i.debt_id = d.id AND i.status = 'pending'
+), 0)
+WHERE has_schedule`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+UPDATE debts SET remaining = total_amount
+WHERE total_amount > 0 AND remaining > total_amount`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+UPDATE accounts a SET
+  balance = LEAST(GREATEST(COALESCE((
+    SELECT SUM(
+      CASE
+        WHEN t.type IN ('opening','income','withdrawal') AND t.account_id = a.id THEN t.amount
+        WHEN t.type = 'adjustment' AND t.account_id = a.id THEN t.amount
+        WHEN t.type IN ('expense','contribution') AND t.account_id = a.id THEN -t.amount
+        WHEN t.type = 'transfer' AND t.account_id = a.id THEN -t.amount
+        WHEN t.type = 'transfer' AND t.to_account_id = a.id THEN t.amount
+        ELSE 0
+      END
+    )
+    FROM transactions t
+    WHERE t.account_id = a.id OR t.to_account_id = a.id
+  ), 0), 0), 10000000000000),
+  updated_at = NOW()`); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // repairOrphanedAccountHistory undoes leftover transfers and deletes ghost

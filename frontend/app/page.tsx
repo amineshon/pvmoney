@@ -14,7 +14,7 @@ import Link from "next/link";
 import { ArrowUpRight, Sparkles, WalletCards, Gem, HandCoins } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { FxHint } from "@/components/FxHint";
-import { convertToman, liveAssetValue, type Rates } from "@/lib/rates";
+import { calcNetWorth, convertToman, liveAssetValue, type Rates } from "@/lib/rates";
 
 export default function HomePage() {
   const { t, locale } = useI18n();
@@ -47,6 +47,7 @@ export default function HomePage() {
   }
 
   const net = data.monthly_income - data.monthly_expense;
+  const { assetsLive, netWorth } = calcNetWorth(data.liquid, data.assets || [], data.debts_remaining || 0, rates);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -70,16 +71,17 @@ export default function HomePage() {
       >
         <Sparkles className="absolute start-8 top-8 h-6 w-6 text-gold-400/40" />
         <div className="text-sm text-white/50">{t("dash.netWorth")}</div>
-        <div className="gold-text mt-2 text-4xl font-black tracking-tight md:text-6xl">{toman(data.net_worth, true, locale)}</div>
+        <div className={`mt-2 text-4xl font-black tracking-tight md:text-6xl ${netWorth < 0 ? "text-rose-300" : "gold-text"}`}>{toman(netWorth, true, locale)}</div>
+        <div className="mt-2 text-xs text-white/35">{t("dash.netFormula")}</div>
         {rates && (
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-white/50">
-            <span>≈ {formatUSD(convertToman(data.net_worth, rates).usd, locale)}</span>
-            <span>≈ {formatEUR(convertToman(data.net_worth, rates).eur, locale)}</span>
+            <span>≈ {formatUSD(convertToman(netWorth, rates).usd, locale)}</span>
+            <span>≈ {formatEUR(convertToman(netWorth, rates).eur, locale)}</span>
           </div>
         )}
         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <HeroStat icon={<WalletCards className="h-4 w-4" />} label={t("dash.liquid")} value={toman(data.liquid, true, locale)} />
-          <HeroStat icon={<Gem className="h-4 w-4" />} label={t("dash.assets")} value={toman(data.assets_total, true, locale)} />
+          <HeroStat icon={<Gem className="h-4 w-4" />} label={t("dash.assets")} value={toman(assetsLive, true, locale)} />
           <HeroStat icon={<HandCoins className="h-4 w-4" />} label={t("dash.debts")} value={toman(data.debts_remaining || 0, true, locale)} tone="down" />
           <HeroStat
             icon={<ArrowUpRight className="h-4 w-4" />}

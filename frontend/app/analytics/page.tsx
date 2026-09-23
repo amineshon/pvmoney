@@ -16,16 +16,20 @@ import { api } from "@/lib/api";
 import { Dashboard } from "@/lib/types";
 import { faMonth, formatMoney, toman } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
+import { calcNetWorth, type Rates } from "@/lib/rates";
 
 const COLORS = ["#e0c36a", "#3ee0a2", "#fb7185", "#7dd3fc", "#a78bfa", "#f9a8d4", "#fbbf24", "#34d399"];
 
 export default function AnalyticsPage() {
   const { t, label, locale } = useI18n();
   const [data, setData] = useState<Dashboard | null>(null);
+  const [rates, setRates] = useState<Rates | null>(null);
   useEffect(() => {
     api.dashboard().then(setData);
+    api.rates().then(setRates).catch(() => setRates(null));
   }, []);
   if (!data) return <div className="text-white/40">{t("analytics.loading")}</div>;
+  const { netWorth } = calcNetWorth(data.liquid, data.assets || [], data.debts_remaining || 0, rates);
 
   const monthly = data.monthly.map((m) => ({
     ...m,
@@ -45,7 +49,7 @@ export default function AnalyticsPage() {
     <div className="mx-auto max-w-6xl">
       <h1 className="mb-8 text-3xl font-extrabold">{t("analytics.title")}</h1>
       <div className="grid gap-4 md:grid-cols-3">
-        <Stat label={t("dash.netWorth")} value={toman(data.net_worth, true, locale)} />
+        <Stat label={t("dash.netWorth")} value={toman(netWorth, true, locale)} />
         <Stat label={t("dash.incomeMonth")} value={toman(data.monthly_income, true, locale)} />
         <Stat label={t("dash.expenseMonth")} value={toman(data.monthly_expense, true, locale)} />
       </div>

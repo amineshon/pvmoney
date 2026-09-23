@@ -41,3 +41,13 @@ export function liveAssetValue(type: string, qty: number, book: number, rates?: 
 export function isMarketAsset(type: string) {
   return type === "gold" || type === "gold18" || type === "gold24" || type === "usd" || type === "eur";
 }
+
+export function calcNetWorth(
+  liquid: number,
+  assets: { type: string; quantity: number; value: number }[],
+  debts: number,
+  rates?: Rates | null,
+) {
+  const assetsLive = assets.reduce((s, a) => s + liveAssetValue(a.type, a.quantity, a.value, rates), 0);
+  return { assetsLive, netWorth: liquid + assetsLive - (debts || 0) };
+}

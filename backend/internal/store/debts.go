@@ -68,6 +68,12 @@ func (s *Store) CreateDebt(ctx context.Context, in models.DebtInput) (models.Deb
 	if strings.TrimSpace(in.Name) == "" {
 		return models.Debt{}, fmt.Errorf("%w: name is required", ErrInvalid)
 	}
+	if err := CheckMoney(in.TotalAmount); err != nil {
+		return models.Debt{}, err
+	}
+	if err := CheckMoney(in.MonthlyAmount); err != nil {
+		return models.Debt{}, err
+	}
 	if err := CheckMoney(in.CommissionAmount); err != nil {
 		return models.Debt{}, err
 	}

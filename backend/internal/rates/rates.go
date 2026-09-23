@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,6 +35,30 @@ var (
 )
 
 const cacheTTL = 5 * time.Minute
+
+func AssetValue(typ string, qty float64, book int64, r *Rates) int64 {
+	if r == nil {
+		return book
+	}
+	if qty <= 0 {
+		qty = 1
+	}
+	var unit int64
+	switch typ {
+	case "gold", "gold18":
+		unit = r.Gold18Toman
+	case "gold24":
+		unit = r.Gold24Toman
+	case "usd":
+		unit = r.USDToman
+	case "eur":
+		unit = r.EURToman
+	}
+	if unit <= 0 {
+		return book
+	}
+	return int64(math.Round(qty * float64(unit)))
+}
 
 func Get(ctx context.Context) (Rates, error) {
 	mu.Lock()
