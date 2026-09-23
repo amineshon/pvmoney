@@ -217,5 +217,90 @@ WHERE amount > 10000000000000;
 UPDATE assets SET unit_value = LEAST(unit_value, 10000000000000), value = LEAST(value, 10000000000000)
 WHERE unit_value > 10000000000000 OR value > 10000000000000;
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	return repairOrphanedAccountHistory(database)
+}
+
+// repairOrphanedAccountHistory undoes leftover transfers and deletes ghost
+// transactions left behind when an account was deleted without reversing txs.
+func repairOrphanedAccountHistory(database *sql.DB) error {
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`INSERT INTO app_settings (key, value) VALUES ('orphan_tx_repair_v1', '1') ON CONFLICT (key) DO NOTHING`)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil
+	}
+
+	if _, err := tx.Exec(`
+UPDATE accounts a
+SET balance = GREATEST(a.balance - x.total, 0), updated_at = NOW()
+FROM (
+  SELECT to_account_id AS id, SUM(amount) AS total
+  FROM transactions
+  WHERE type = 'transfer' AND account_id IS NULL AND to_account_id IS NOT NULL
+  GROUP BY to_account_id
+) x
+WHERE a.id = x.id`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+UPDATE accounts a
+SET balance = LEAST(a.balance + x.total, 10000000000000), updated_at = NOW()
+FROM (
+  SELECT account_id AS id, SUM(amount) AS total
+  FROM transactions
+  WHERE type = 'transfer' AND to_account_id IS NULL AND account_id IS NOT NULL
+  GROUP BY account_id
+) x
+WHERE a.id = x.id`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+UPDATE projects p
+SET current_amount = GREATEST(p.current_amount - x.total, 0), status = 'active', updated_at = NOW()
+FROM (
+  SELECT project_id AS id, SUM(amount) AS total
+  FROM transactions
+  WHERE type IN ('expense', 'contribution')
+    AND account_id IS NULL AND to_account_id IS NULL AND project_id IS NOT NULL
+  GROUP BY project_id
+) x
+WHERE p.id = x.id`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+UPDATE project_items i
+SET paid_amount = GREATEST(i.paid_amount - x.total, 0), updated_at = NOW()
+FROM (
+  SELECT item_id AS id, SUM(amount) AS total
+  FROM transactions
+  WHERE item_id IS NOT NULL AND account_id IS NULL AND to_account_id IS NULL
+  GROUP BY item_id
+) x
+WHERE i.id = x.id`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+DELETE FROM transactions
+WHERE (account_id IS NULL AND to_account_id IS NULL)
+   OR (type = 'transfer' AND account_id IS NULL AND to_account_id IS NOT NULL)
+   OR (type = 'transfer' AND to_account_id IS NULL AND account_id IS NOT NULL)`); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }

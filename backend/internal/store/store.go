@@ -122,15 +122,95 @@ WHERE id=$1`, id, strings.TrimSpace(in.Name), in.BankName, in.AccountNumber, in.
 }
 
 func (s *Store) DeleteAccount(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id=$1`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	defer tx.Rollback()
+
+	var exists string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM accounts WHERE id=$1 FOR UPDATE`, id).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+
+	// Transfers out of this account: take the leftover credit back from destinations.
+	if _, err := tx.ExecContext(ctx, `
+UPDATE accounts a
+SET balance = GREATEST(a.balance - x.total, 0), updated_at = NOW()
+FROM (
+  SELECT to_account_id AS id, SUM(amount) AS total
+  FROM transactions
+  WHERE type = 'transfer' AND account_id = $1 AND to_account_id IS NOT NULL AND to_account_id <> $1
+  GROUP BY to_account_id
+) x
+WHERE a.id = x.id`, id); err != nil {
+		return err
+	}
+
+	// Transfers into this account: give the money back to the source accounts.
+	if _, err := tx.ExecContext(ctx, `
+UPDATE accounts a
+SET balance = LEAST(a.balance + x.total, $2), updated_at = NOW()
+FROM (
+  SELECT account_id AS id, SUM(amount) AS total
+  FROM transactions
+  WHERE type = 'transfer' AND to_account_id = $1 AND account_id IS NOT NULL AND account_id <> $1
+  GROUP BY account_id
+) x
+WHERE a.id = x.id`, id, models.MaxMoney); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+UPDATE projects p
+SET current_amount = GREATEST(p.current_amount - x.total, 0), status = 'active', updated_at = NOW()
+FROM (
+  SELECT project_id AS id, SUM(amount) AS total
+  FROM transactions
+  WHERE account_id = $1 AND project_id IS NOT NULL AND type IN ('expense', 'contribution')
+  GROUP BY project_id
+) x
+WHERE p.id = x.id`, id); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+UPDATE project_items i
+SET paid_amount = GREATEST(i.paid_amount - x.total, 0), updated_at = NOW()
+FROM (
+  SELECT item_id AS id, SUM(amount) AS total
+  FROM transactions
+  WHERE account_id = $1 AND item_id IS NOT NULL
+  GROUP BY item_id
+) x
+WHERE i.id = x.id`, id); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+UPDATE projects p
+SET current_amount = p.current_amount + x.total, updated_at = NOW()
+FROM (
+  SELECT project_id AS id, SUM(amount) AS total
+  FROM transactions
+  WHERE account_id = $1 AND project_id IS NOT NULL AND type = 'withdrawal'
+  GROUP BY project_id
+) x
+WHERE p.id = x.id`, id); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM transactions WHERE account_id = $1 OR to_account_id = $1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM accounts WHERE id = $1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) AdjustAccount(ctx context.Context, id string, in models.AdjustInput) (models.Account, error) {
@@ -713,10 +793,10 @@ func (s *Store) Dashboard(ctx context.Context) (models.Dashboard, error) {
 
 	_ = s.db.QueryRowContext(ctx, `
 SELECT COALESCE(SUM(amount),0) FROM transactions
-WHERE type='income' AND occurred_at >= date_trunc('month', NOW())`).Scan(&d.MonthlyIncome)
+WHERE type='income' AND account_id IS NOT NULL AND occurred_at >= date_trunc('month', NOW())`).Scan(&d.MonthlyIncome)
 	_ = s.db.QueryRowContext(ctx, `
 SELECT COALESCE(SUM(amount),0) FROM transactions
-WHERE type IN ('expense','contribution') AND occurred_at >= date_trunc('month', NOW())`).Scan(&d.MonthlyExpense)
+WHERE type IN ('expense','contribution') AND account_id IS NOT NULL AND occurred_at >= date_trunc('month', NOW())`).Scan(&d.MonthlyExpense)
 
 	accounts, err := s.ListAccounts(ctx)
 	if err != nil {
@@ -753,6 +833,7 @@ FROM (
          CASE WHEN type IN ('expense','contribution') THEN amount ELSE 0 END AS expense
   FROM transactions
   WHERE occurred_at >= NOW() - INTERVAL '30 days'
+    AND account_id IS NOT NULL
     AND type IN ('income','expense','contribution')
 ) q
 GROUP BY day ORDER BY day`)
@@ -773,7 +854,7 @@ GROUP BY day ORDER BY day`)
 	crows, err := s.db.QueryContext(ctx, `
 SELECT COALESCE(NULLIF(category,''),'سایر'), COALESCE(SUM(amount),0)
 FROM transactions
-WHERE type IN ('expense','contribution') AND occurred_at >= date_trunc('month', NOW())
+WHERE type IN ('expense','contribution') AND account_id IS NOT NULL AND occurred_at >= date_trunc('month', NOW())
 GROUP BY 1 ORDER BY 2 DESC LIMIT 8`)
 	if err != nil {
 		return d, err
@@ -795,6 +876,7 @@ SELECT to_char(date_trunc('month', occurred_at), 'YYYY-MM'),
        COALESCE(SUM(CASE WHEN type IN ('expense','contribution') THEN amount ELSE 0 END),0)
 FROM transactions
 WHERE occurred_at >= date_trunc('month', NOW()) - INTERVAL '5 months'
+  AND account_id IS NOT NULL
   AND type IN ('income','expense','contribution')
 GROUP BY 1 ORDER BY 1`)
 	if err != nil {
