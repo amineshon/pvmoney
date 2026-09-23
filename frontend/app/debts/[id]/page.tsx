@@ -7,6 +7,7 @@ import { Account, Debt } from "@/lib/types";
 import { faDate, toman } from "@/lib/format";
 import { Btn } from "@/components/ui";
 import { DebtForm, PayDebtForm } from "@/components/forms";
+import { InstallmentTimeline } from "@/components/InstallmentTimeline";
 import { apiError, useI18n } from "@/lib/i18n";
 
 export default function DebtDetailPage() {
@@ -29,7 +30,6 @@ export default function DebtDetailPage() {
   }, [id]);
 
   if (!debt) return <div className="text-white/40">{t("common.loading")}</div>;
-  const items = debt.installments || [];
 
   async function remove() {
     if (!confirm(t("debts.deleteAsk"))) return;
@@ -93,69 +93,19 @@ export default function DebtDetailPage() {
       </div>
 
       <div className="mt-8">
-        <h2 className="mb-3 font-bold">{t("debts.installments")}</h2>
-        {items.length === 0 ? (
-          <div className="glass rounded-[24px] p-6 text-sm text-white/45">{t("debts.noInst")}</div>
-        ) : (
-          <div className="space-y-2">
-            {items.map((it, idx) => {
-              const isLast = idx === items.length - 1 && items.length > 1 && it.amount !== (debt.monthly_amount || items[0].amount);
-              const prior = it.status === "paid" && !it.account_id;
-              return (
-              <div key={it.id} className="glass flex flex-wrap items-center justify-between gap-3 rounded-[20px] px-4 py-3">
-                <div>
-                  <div className="font-medium">
-                    {faDate(it.due_date, false, locale)}
-                    {prior && (
-                      <span className="ms-2 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] text-emerald-300">{t("form.debt.priorBadge")}</span>
-                    )}
-                    {isLast && !prior && (
-                      <span className="ms-2 rounded-full bg-gold-400/15 px-2 py-0.5 text-[10px] text-gold-200">{t("debts.lastInst")}</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-white/40">
-                    {prior ? t("form.debt.priorBadge") : it.status === "paid" ? t("debts.paid") : it.status === "overdue" ? t("debts.overdue") : t("debts.pending")}
-                    {it.paid_at ? ` · ${faDate(it.paid_at, true, locale)}` : ""}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className={`font-bold ${isLast && !prior ? "text-gold-200" : prior ? "text-emerald-300" : "text-rose-300"}`}>{toman(it.amount, true, locale)}</div>
-                  {it.status !== "paid" && (
-                    <>
-                      <Btn className="py-2 text-xs" onClick={() => setPay({ instId: it.id, amount: it.amount })}>
-                        {t("debts.payInst")}
-                      </Btn>
-                      <Btn
-                        kind="ghost"
-                        className="py-2 text-xs"
-                        onClick={async () => {
-                          if (!confirm(t("debts.priorAsk"))) return;
-                          await api.payInstallment(debt.id, it.id, { amount: it.amount, already_paid: true });
-                          load();
-                        }}
-                      >
-                        {t("debts.markPrior")}
-                      </Btn>
-                    </>
-                  )}
-                  {prior && (
-                    <Btn
-                      kind="ghost"
-                      className="py-2 text-xs"
-                      onClick={async () => {
-                        await api.undoPriorInstallment(debt.id, it.id);
-                        load();
-                      }}
-                    >
-                      {t("debts.undoPrior")}
-                    </Btn>
-                  )}
-                </div>
-              </div>
-              );
-            })}
-          </div>
-        )}
+        <InstallmentTimeline
+          debt={debt}
+          onPay={(it) => setPay({ instId: it.id, amount: it.amount })}
+          onMarkPrior={async (it) => {
+            if (!confirm(t("debts.priorAsk"))) return;
+            await api.payInstallment(debt.id, it.id, { amount: it.amount, already_paid: true });
+            load();
+          }}
+          onUndoPrior={async (it) => {
+            await api.undoPriorInstallment(debt.id, it.id);
+            load();
+          }}
+        />
       </div>
 
       {edit && <DebtForm initial={debt} onClose={() => setEdit(false)} onSaved={load} />}

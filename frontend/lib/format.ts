@@ -1,3 +1,4 @@
+import { formatDisplayDate, formatDisplayMonth, isoToLocalDate } from "./calendar";
 import type { Locale } from "./i18n";
 
 const intlMap: Record<Locale, string> = { fa: "fa-IR", en: "en-US", de: "de-DE" };
@@ -52,20 +53,18 @@ function round(n: number): number {
 }
 
 export function faDate(iso: string, withTime = false, locale: Locale = "fa"): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(localeTag(locale), {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    ...(withTime ? { hour: "2-digit", minute: "2-digit" } : {}),
-  });
+  if (!iso) return "";
+  const d = isoToLocalDate(iso);
+  if (!d) return iso;
+  const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const day = formatDisplayDate(local, locale);
+  if (!withTime) return day;
+  const time = d.toLocaleTimeString(localeTag(locale), { hour: "2-digit", minute: "2-digit" });
+  return `${day} · ${time}`;
 }
 
 export function faMonth(ym: string, locale: Locale = "fa"): string {
-  const [y, m] = ym.split("-").map(Number);
-  if (!y || !m) return ym;
-  return new Date(y, m - 1, 1).toLocaleDateString(localeTag(locale), { month: "long", year: "numeric" });
+  return formatDisplayMonth(ym, locale);
 }
 
 export function maskCard(num: string, locale: Locale = "fa"): string {

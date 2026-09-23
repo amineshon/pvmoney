@@ -92,6 +92,3 @@ textarea {
   color-scheme: dark;
 }
 
-input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: invert(0.85);
-}

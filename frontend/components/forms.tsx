@@ -6,6 +6,7 @@ import { ACCOUNT_COLORS, ACCOUNT_TYPES, ASSET_TYPES, DEBT_COLORS, DEBT_TYPES, EX
 import { api } from "@/lib/api";
 import { Btn, ErrorBox, Field, Modal, inputClass } from "./ui";
 import { MoneyInput } from "./MoneyInput";
+import { DateField } from "./DateField";
 import { FxHint } from "./FxHint";
 import { apiError, useI18n } from "@/lib/i18n";
 import { faDate, formatMoney, toman } from "@/lib/format";
@@ -214,7 +215,7 @@ export function ProjectForm({
           </select>
         </Field>
         <Field label={t("form.project.deadline")}>
-          <input type="date" className={inputClass()} value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+          <DateField value={deadline} onChange={setDeadline} allowEmpty />
         </Field>
         <Field label={t("common.color")}>
           <div className="flex gap-2">
@@ -805,7 +806,7 @@ export function TxForm({
         </Field>
         <div className="grid gap-3 md:grid-cols-2">
           <Field label={t("common.date")}>
-            <input type="date" className={inputClass()} value={date} onChange={(e) => setDate(e.target.value)} />
+            <DateField value={date} onChange={setDate} required />
           </Field>
           <Field label={t("common.description")}>
             <input className={inputClass()} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t("form.tx.descPh")} />
@@ -963,7 +964,7 @@ export function DebtForm({
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label={t("form.debt.firstDue")}>
-                <input type="date" className={inputClass()} value={start} onChange={(e) => setStart(e.target.value)} required />
+                <DateField value={start} onChange={setStart} required />
               </Field>
               <Field label={t("form.debt.count")}>
                 <div className="flex items-center gap-2">
@@ -1067,7 +1068,7 @@ export function DebtForm({
         )}
         {!hasSchedule && (
           <Field label={t("common.date")}>
-            <input type="date" className={inputClass()} value={start} onChange={(e) => setStart(e.target.value)} />
+            <DateField value={start} onChange={setStart} allowEmpty />
           </Field>
         )}
         <Field label={t("form.debt.commission")}>
