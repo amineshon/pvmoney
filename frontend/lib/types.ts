@@ -17,6 +17,7 @@ export type ProjectItem = {
   name: string;
   planned_amount: number;
   paid_amount: number;
+  prior_amount?: number;
   notes: string;
   created_at: string;
   updated_at: string;
@@ -50,6 +51,7 @@ export type Project = {
   status: string;
   asset_id?: string | null;
   result_asset_type: string;
+  prior_amount?: number;
   items?: ProjectItem[];
   asset?: Asset | null;
   created_at: string;

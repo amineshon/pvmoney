@@ -77,6 +77,11 @@ export default function ProjectDetailPage() {
             <Stat label={t("projects.budget")} value={toman(project.target_amount, true, locale)} gold />
             <Stat label={t("projects.spentLabel")} value={toman(project.current_amount, true, locale)} rose />
           </div>
+          {(project.prior_amount || 0) > 0 && (
+            <p className="mt-3 text-xs text-white/40">
+              {t("projects.prior")}: {toman(project.prior_amount || 0, true, locale)}
+            </p>
+          )}
           <div className="mt-4 flex items-end justify-between">
             <div>
               <div className="text-xs text-white/40">{t("projects.remaining")}</div>

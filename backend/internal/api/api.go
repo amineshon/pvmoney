@@ -83,6 +83,7 @@ func New(s *store.Store, bot TelegramSender) http.Handler {
 		r.Delete("/api/debts/{id}", api.deleteDebt)
 		r.Post("/api/debts/{id}/pay", api.payDebt)
 		r.Post("/api/debts/{id}/installments/{instId}/pay", api.payInstallment)
+		r.Delete("/api/debts/{id}/installments/{instId}/prior", api.undoPriorInstallment)
 
 		r.Get("/api/telegram", api.telegramStatus)
 		r.Post("/api/telegram/test", api.telegramTest)
@@ -497,6 +498,15 @@ func (s *Server) payInstallment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emit(notify.EvDebtPay(item.Name, in.Amount, item.Remaining))
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (s *Server) undoPriorInstallment(w http.ResponseWriter, r *http.Request) {
+	item, err := s.store.UnrecordPriorInstallment(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "instId"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, item)
 }
 

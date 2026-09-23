@@ -139,13 +139,36 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'active')`,
 	if err != nil {
 		return models.Debt{}, err
 	}
+	prepaid := in.AlreadyPaidCount
+	if prepaid < 0 {
+		prepaid = 0
+	}
+	if prepaid > len(amounts) {
+		prepaid = len(amounts)
+	}
+	remaining = 0
 	for i, dt := range dates {
-		amt := amounts[i]
+		status := "pending"
+		var paidAt any
+		if i < prepaid {
+			status = "paid"
+			paidAt = dt
+		} else {
+			remaining += amounts[i]
+		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO debt_installments (id, debt_id, amount, due_date, status) VALUES ($1,$2,$3,$4,'pending')`,
-			uuid.NewString(), id, amt, dt); err != nil {
+INSERT INTO debt_installments (id, debt_id, amount, due_date, status, paid_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+			uuid.NewString(), id, amounts[i], dt, status, paidAt); err != nil {
 			return models.Debt{}, err
 		}
+	}
+	status := "active"
+	if remaining <= 0 {
+		status = "paid"
+		remaining = 0
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE debts SET remaining=$2, status=$3 WHERE id=$1`, id, remaining, status); err != nil {
+		return models.Debt{}, err
 	}
 	if acc := strings.TrimSpace(deref(in.CommissionAccountID)); acc != "" && in.CommissionAmount > 0 {
 		if err := changeBalance(ctx, tx, acc, -in.CommissionAmount); err != nil {
@@ -211,20 +234,23 @@ func (s *Store) UpdateDebt(ctx context.Context, id string, in models.DebtInput) 
 		return models.Debt{}, err
 	}
 
-	var paidSum int64
+	var accountPaid int64
 	if err := tx.QueryRowContext(ctx, `
-SELECT COALESCE(SUM(amount),0) FROM debt_installments WHERE debt_id=$1 AND status='paid'`, id).Scan(&paidSum); err != nil {
+SELECT COALESCE(SUM(amount),0) FROM debt_installments
+WHERE debt_id=$1 AND status='paid' AND account_id IS NOT NULL`, id).Scan(&accountPaid); err != nil {
 		return models.Debt{}, err
 	}
-	if in.TotalAmount < paidSum {
+	if in.TotalAmount < accountPaid {
 		return models.Debt{}, fmt.Errorf("%w: total is less than already paid", ErrInvalid)
 	}
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM debt_installments WHERE debt_id=$1 AND status<>'paid'`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM debt_installments
+WHERE debt_id=$1 AND NOT (status='paid' AND account_id IS NOT NULL)`, id); err != nil {
 		return models.Debt{}, err
 	}
 
-	left := in.TotalAmount - paidSum
+	left := in.TotalAmount - accountPaid
 	remaining := left
 	if in.Type == "" {
 		in.Type = "loan"
@@ -247,17 +273,35 @@ SELECT COALESCE(SUM(amount),0) FROM debt_installments WHERE debt_id=$1 AND statu
 		if errPlan != nil {
 			return models.Debt{}, errPlan
 		}
-		remaining = sumAmounts(amounts)
 		end = dates[len(dates)-1]
+		prepaid := in.AlreadyPaidCount
+		if prepaid < 0 {
+			prepaid = 0
+		}
+		if prepaid > len(amounts) {
+			prepaid = len(amounts)
+		}
+		remaining = 0
 		for i, dt := range dates {
+			status := "pending"
+			var paidAt any
+			if i < prepaid {
+				status = "paid"
+				paidAt = dt
+			} else {
+				remaining += amounts[i]
+			}
 			if _, err := tx.ExecContext(ctx, `
-INSERT INTO debt_installments (id, debt_id, amount, due_date, status) VALUES ($1,$2,$3,$4,'pending')`,
-				uuid.NewString(), id, amounts[i], dt); err != nil {
+INSERT INTO debt_installments (id, debt_id, amount, due_date, status, paid_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+				uuid.NewString(), id, amounts[i], dt, status, paidAt); err != nil {
 				return models.Debt{}, err
 			}
 		}
 	} else if !in.HasSchedule {
 		end = start
+		if in.AlreadyPaidCount > 0 {
+			remaining = 0
+		}
 	}
 
 	status := "active"
@@ -320,6 +364,22 @@ func (s *Store) PayInstallment(ctx context.Context, debtID, instID string, in mo
 	if status == "paid" {
 		return models.Debt{}, fmt.Errorf("%w: already paid", ErrInvalid)
 	}
+	if in.AlreadyPaid {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE debt_installments SET status='paid', paid_at=NOW(), account_id=NULL WHERE id=$1`, instID); err != nil {
+			return models.Debt{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+UPDATE debts SET remaining=GREATEST(remaining-$2,0),
+status = CASE WHEN remaining-$2 <= 0 THEN 'paid' ELSE 'active' END,
+updated_at=NOW() WHERE id=$1`, debtID, in.Amount); err != nil {
+			return models.Debt{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return models.Debt{}, err
+		}
+		return s.GetDebt(ctx, debtID)
+	}
 	if err := changeBalance(ctx, tx, in.AccountID, -in.Amount); err != nil {
 		return models.Debt{}, err
 	}
@@ -340,6 +400,41 @@ updated_at=NOW() WHERE id=$1`, debtID, in.Amount); err != nil {
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO transactions (id, account_id, type, amount, category, description, occurred_at, created_at)
 VALUES ($1,$2,'expense',$3,'debt',$4,NOW(),NOW())`, uuid.NewString(), in.AccountID, in.Amount, desc); err != nil {
+		return models.Debt{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.Debt{}, err
+	}
+	return s.GetDebt(ctx, debtID)
+}
+
+func (s *Store) UnrecordPriorInstallment(ctx context.Context, debtID, instID string) (models.Debt, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.Debt{}, err
+	}
+	defer tx.Rollback()
+	var status string
+	var accountID sql.NullString
+	var amount int64
+	err = tx.QueryRowContext(ctx, `
+SELECT status, account_id, amount FROM debt_installments WHERE id=$1 AND debt_id=$2 FOR UPDATE`, instID, debtID).
+		Scan(&status, &accountID, &amount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.Debt{}, ErrNotFound
+	}
+	if err != nil {
+		return models.Debt{}, err
+	}
+	if status != "paid" || accountID.Valid {
+		return models.Debt{}, fmt.Errorf("%w: only prior payments can be undone", ErrInvalid)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE debt_installments SET status='pending', paid_at=NULL, account_id=NULL WHERE id=$1`, instID); err != nil {
+		return models.Debt{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE debts SET remaining=remaining+$2, status='active', updated_at=NOW() WHERE id=$1`, debtID, amount); err != nil {
 		return models.Debt{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -369,6 +464,18 @@ func (s *Store) PayDebt(ctx context.Context, debtID string, in models.PayInput) 
 	}
 	if status == "paid" {
 		return models.Debt{}, fmt.Errorf("%w: already paid", ErrInvalid)
+	}
+	if in.AlreadyPaid {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE debts SET remaining=GREATEST(remaining-$2,0),
+status = CASE WHEN remaining-$2 <= 0 THEN 'paid' ELSE 'active' END,
+updated_at=NOW() WHERE id=$1`, debtID, in.Amount); err != nil {
+			return models.Debt{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return models.Debt{}, err
+		}
+		return s.GetDebt(ctx, debtID)
 	}
 	if err := changeBalance(ctx, tx, in.AccountID, -in.Amount); err != nil {
 		return models.Debt{}, err

@@ -157,7 +157,7 @@ export function ProjectForm({
   onClose,
   onSaved,
 }: {
-  initial?: { id: string; name: string; description: string; target_amount: number; base_amount?: number; deadline?: string | null; color: string; result_asset_type?: string };
+  initial?: { id: string; name: string; description: string; target_amount: number; base_amount?: number; prior_amount?: number; deadline?: string | null; color: string; result_asset_type?: string };
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -165,6 +165,7 @@ export function ProjectForm({
   const [name, setName] = useState(initial?.name || "");
   const [description, setDescription] = useState(initial?.description || "");
   const [target, setTarget] = useState(initial?.base_amount ?? initial?.target_amount ?? 0);
+  const [prior, setPrior] = useState(initial?.prior_amount || 0);
   const [deadline, setDeadline] = useState(initial?.deadline ? initial.deadline.slice(0, 10) : "");
   const [color, setColor] = useState(initial?.color || "#3ee0a2");
   const [resultType, setResultType] = useState(initial?.result_asset_type || "");
@@ -174,7 +175,7 @@ export function ProjectForm({
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     try {
-      const body = { name, description, base_amount: target, target_amount: target, deadline: deadline || null, color, result_asset_type: resultType };
+      const body = { name, description, base_amount: target, target_amount: target, deadline: deadline || null, color, result_asset_type: resultType, prior_amount: prior };
       if (initial) await api.updateProject(initial.id, body);
       else await api.createProject(body);
       onSaved();
@@ -197,6 +198,10 @@ export function ProjectForm({
         <Field label={t("form.project.budget")}>
           <MoneyInput value={target} onChange={setTarget} />
           <p className="mt-1.5 text-xs text-white/40">{t("form.project.budgetHint")}</p>
+        </Field>
+        <Field label={t("form.project.prior")}>
+          <MoneyInput value={prior} onChange={setPrior} />
+          <p className="mt-1.5 text-xs text-white/40">{t("form.project.priorHint")}</p>
         </Field>
         <Field label={t("form.project.result")}>
           <select className={inputClass()} value={resultType} onChange={(e) => setResultType(e.target.value)}>
@@ -240,7 +245,7 @@ export function ItemForm({
   onSaved,
 }: {
   projectId: string;
-  initial?: { id: string; name: string; planned_amount: number; notes: string };
+  initial?: { id: string; name: string; planned_amount: number; notes: string; prior_amount?: number };
   budgetTotal?: number;
   onClose: () => void;
   onSaved: () => void;
@@ -248,6 +253,7 @@ export function ItemForm({
   const { t, locale } = useI18n();
   const [name, setName] = useState(initial?.name || "");
   const [planned, setPlanned] = useState(initial?.planned_amount || 0);
+  const [prior, setPrior] = useState(initial?.prior_amount || 0);
   const [notes, setNotes] = useState(initial?.notes || "");
   const [error, setError] = useState("");
   const replacing = initial?.planned_amount || 0;
@@ -256,7 +262,7 @@ export function ItemForm({
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     try {
-      const body = { name, planned_amount: planned, notes };
+      const body = { name, planned_amount: planned, notes, prior_amount: prior };
       if (initial) await api.updateItem(projectId, initial.id, body);
       else await api.createItem(projectId, body);
       onSaved();
@@ -281,6 +287,10 @@ export function ItemForm({
               {t("form.item.nextBudget", { amount: toman(nextBudget, true, locale) })}
             </p>
           )}
+        </Field>
+        <Field label={t("form.item.prior")}>
+          <MoneyInput value={prior} onChange={setPrior} />
+          <p className="mt-1.5 text-xs text-white/40">{t("form.item.priorHint")}</p>
         </Field>
         <Field label={t("common.note")}>
           <input className={inputClass()} value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -314,12 +324,13 @@ export function PayItemForm({
   const [accountId, setAccountId] = useState(accounts[0]?.id || "");
   const [amount, setAmount] = useState(Math.max(0, remaining));
   const [desc, setDesc] = useState(itemName);
+  const [alreadyPaid, setAlreadyPaid] = useState(false);
   const [error, setError] = useState("");
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     try {
-      await api.payItem(projectId, itemId, { account_id: accountId, amount, description: desc });
+      await api.payItem(projectId, itemId, { account_id: alreadyPaid ? "" : accountId, amount, description: desc, already_paid: alreadyPaid });
       onSaved();
       onClose();
     } catch (err) {
@@ -331,6 +342,11 @@ export function PayItemForm({
     <Modal title={t("form.payItem.title")} subtitle={t("form.payItem.sub", { name: itemName })} onClose={onClose}>
       <form onSubmit={onSubmit}>
         <ErrorBox message={error} />
+        <label className="mb-4 flex items-center gap-3 rounded-2xl bg-white/5 px-4 py-3 text-sm">
+          <input type="checkbox" checked={alreadyPaid} onChange={(e) => setAlreadyPaid(e.target.checked)} />
+          {t("form.alreadyPaid")}
+        </label>
+        {!alreadyPaid && (
         <Field label={t("common.fromAccount")}>
           <select className={inputClass()} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
             {accounts.map((a) => (
@@ -340,6 +356,7 @@ export function PayItemForm({
             ))}
           </select>
         </Field>
+        )}
         <Field label={t("form.payItem.amount")}>
           <MoneyInput value={amount} onChange={setAmount} />
         </Field>
@@ -812,8 +829,9 @@ export function DebtForm({
   onSaved: () => void;
 }) {
   const { t, label, locale } = useI18n();
-  const paidItems = (initial?.installments || []).filter((it) => it.status === "paid");
-  const paidSum = paidItems.reduce((s, it) => s + it.amount, 0);
+  const accountPaidItems = (initial?.installments || []).filter((it) => it.status === "paid" && it.account_id);
+  const accountPaidSum = accountPaidItems.reduce((s, it) => s + it.amount, 0);
+  const historicalCount = (initial?.installments || []).filter((it) => it.status === "paid" && !it.account_id).length;
   const pendingItems = (initial?.installments || []).filter((it) => it.status !== "paid");
 
   const [name, setName] = useState(initial?.name || "");
@@ -827,13 +845,14 @@ export function DebtForm({
   const [monthly, setMonthly] = useState(initial?.monthly_amount || 0);
   const [count, setCount] = useState(0);
   const [countTouched, setCountTouched] = useState(false);
+  const [prepaid, setPrepaid] = useState(historicalCount);
   const [commission, setCommission] = useState(initial?.commission_amount || 0);
   const [commissionAccount, setCommissionAccount] = useState("");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const left = Math.max(0, total - paidSum);
+  const left = Math.max(0, total - accountPaidSum);
   const autoCount = autoInstallmentCount(left, monthly);
   const usedCount = countTouched ? count : autoCount || pendingItems.length;
 
@@ -873,6 +892,7 @@ export function DebtForm({
         monthly_amount: monthly,
         due_day: dueDay,
         count: plan.length,
+        already_paid_count: prepaid,
         commission_amount: commission,
         commission_account_id: !initial && commission > 0 && commissionAccount ? commissionAccount : null,
       };
@@ -920,9 +940,9 @@ export function DebtForm({
           <MoneyInput value={total} onChange={setTotal} />
           <p className="mt-1.5 text-xs text-white/40">{t("form.debt.totalHint")}</p>
         </Field>
-        {paidSum > 0 && (
+        {accountPaidSum > 0 && (
           <div className="mb-4 rounded-2xl border border-amber-400/20 bg-amber-400/8 px-4 py-3 text-sm text-amber-100/80">
-            {t("form.debt.paidKept").replace("{n}", String(paidItems.length)).replace("{a}", toman(paidSum, true, locale))}
+            {t("form.debt.paidKept", { n: accountPaidItems.length, a: toman(accountPaidSum, true, locale) })}
           </div>
         )}
         <label className="mb-4 flex items-center gap-3 rounded-2xl bg-white/5 px-4 py-3 text-sm">
@@ -981,6 +1001,33 @@ export function DebtForm({
                 </div>
               </Field>
             </div>
+            <Field label={t("form.debt.prepaid")}>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="min-h-11 min-w-11 rounded-2xl bg-white/8 text-lg"
+                  onClick={() => setPrepaid((n) => Math.max(0, n - 1))}
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min={0}
+                  max={plan.length || 0}
+                  className={inputClass("text-center")}
+                  value={prepaid}
+                  onChange={(e) => setPrepaid(Math.max(0, Math.min(plan.length || 0, Number(e.target.value) || 0)))}
+                />
+                <button
+                  type="button"
+                  className="min-h-11 min-w-11 rounded-2xl bg-white/8 text-lg"
+                  onClick={() => setPrepaid((n) => Math.min(plan.length || 0, n + 1))}
+                >
+                  +
+                </button>
+              </div>
+              <p className="mt-1.5 text-xs text-white/40">{t("form.debt.prepaidHint")}</p>
+            </Field>
             {plan.length > 0 && (
               <div className="mb-4 overflow-hidden rounded-2xl border border-gold-400/20 bg-gold-400/8">
                 <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
@@ -993,20 +1040,26 @@ export function DebtForm({
                   <p className="px-4 pb-2 text-xs text-white/45">{t("form.debt.lastHint")}</p>
                 )}
                 <div className="max-h-52 divide-y divide-white/5 overflow-y-auto">
-                  {plan.map((it) => (
-                    <div key={`${it.due}-${it.index}`} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+                  {plan.map((it, idx) => {
+                    const prior = idx < prepaid;
+                    return (
+                    <div key={`${it.due}-${it.index}`} className={`flex items-center justify-between gap-3 px-4 py-2.5 text-sm ${prior ? "opacity-55" : ""}`}>
                       <div>
                         <span className="text-white/35">{it.index}.</span>{" "}
-                        <span className="font-medium">{faDate(it.due, false, locale)}</span>
-                        {it.last && it.amount !== monthly && (
+                        <span className={`font-medium ${prior ? "line-through" : ""}`}>{faDate(it.due, false, locale)}</span>
+                        {prior && (
+                          <span className="ms-2 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] text-emerald-300">{t("form.debt.priorBadge")}</span>
+                        )}
+                        {it.last && it.amount !== monthly && !prior && (
                           <span className="ms-2 rounded-full bg-gold-400/15 px-2 py-0.5 text-[10px] text-gold-200">{t("form.debt.last")}</span>
                         )}
                       </div>
-                      <div className={it.last && it.amount !== monthly ? "font-extrabold text-gold-200" : "font-bold"}>
+                      <div className={it.last && it.amount !== monthly && !prior ? "font-extrabold text-gold-200" : "font-bold"}>
                         {toman(it.amount, true, locale)}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1094,19 +1147,20 @@ export function PayDebtForm({
 }: {
   accounts: { id: string; name: string }[];
   amountHint: number;
-  onSubmitPay: (body: { account_id: string; amount: number; description: string }) => Promise<void>;
+  onSubmitPay: (body: { account_id: string; amount: number; description: string; already_paid?: boolean }) => Promise<void>;
   onClose: () => void;
 }) {
   const { t } = useI18n();
   const [accountId, setAccountId] = useState(accounts[0]?.id || "");
   const [amount, setAmount] = useState(Math.max(0, amountHint));
   const [desc, setDesc] = useState("");
+  const [alreadyPaid, setAlreadyPaid] = useState(false);
   const [error, setError] = useState("");
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     try {
-      await onSubmitPay({ account_id: accountId, amount, description: desc });
+      await onSubmitPay({ account_id: alreadyPaid ? "" : accountId, amount, description: desc, already_paid: alreadyPaid });
       onClose();
     } catch (err) {
       setError(apiError(err instanceof Error ? err.message : "", t));
@@ -1117,6 +1171,11 @@ export function PayDebtForm({
     <Modal title={t("form.payDebt.title")} subtitle={t("form.payDebt.sub")} onClose={onClose}>
       <form onSubmit={onSubmit}>
         <ErrorBox message={error} />
+        <label className="mb-4 flex items-center gap-3 rounded-2xl bg-white/5 px-4 py-3 text-sm">
+          <input type="checkbox" checked={alreadyPaid} onChange={(e) => setAlreadyPaid(e.target.checked)} />
+          {t("form.alreadyPaid")}
+        </label>
+        {!alreadyPaid && (
         <Field label={t("common.fromAccount")}>
           <select className={inputClass()} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
             {accounts.map((a) => (
@@ -1126,6 +1185,7 @@ export function PayDebtForm({
             ))}
           </select>
         </Field>
+        )}
         <Field label={t("common.amount")}>
           <MoneyInput value={amount} onChange={setAmount} />
         </Field>

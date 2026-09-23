@@ -258,7 +258,7 @@ VALUES ($1,$2,'adjustment',$3,'تنظیم',$4,NOW(),NOW())`, uuid.NewString(), i
 
 func (s *Store) ListProjects(ctx context.Context) ([]models.Project, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, name, description, target_amount, current_amount, base_amount, deadline, color, status, created_at, updated_at, asset_id, result_asset_type
+SELECT id, name, description, target_amount, current_amount, base_amount, deadline, color, status, created_at, updated_at, asset_id, result_asset_type, prior_amount
 FROM projects ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -293,7 +293,7 @@ func (s *Store) attachProjectItems(ctx context.Context, projects []models.Projec
 		projects[i].Items = []models.ProjectItem{}
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, project_id, name, planned_amount, paid_amount, notes, created_at, updated_at
+SELECT id, project_id, name, planned_amount, paid_amount, notes, created_at, updated_at, prior_amount
 FROM project_items WHERE project_id = ANY($1) ORDER BY created_at`, pq.Array(ids))
 	if err != nil {
 		return err
@@ -301,7 +301,7 @@ FROM project_items WHERE project_id = ANY($1) ORDER BY created_at`, pq.Array(ids
 	defer rows.Close()
 	for rows.Next() {
 		var it models.ProjectItem
-		if err := rows.Scan(&it.ID, &it.ProjectID, &it.Name, &it.PlannedAmount, &it.PaidAmount, &it.Notes, &it.CreatedAt, &it.UpdatedAt); err != nil {
+		if err := rows.Scan(&it.ID, &it.ProjectID, &it.Name, &it.PlannedAmount, &it.PaidAmount, &it.Notes, &it.CreatedAt, &it.UpdatedAt, &it.PriorAmount); err != nil {
 			return err
 		}
 		i, ok := idx[it.ProjectID]
@@ -315,7 +315,7 @@ FROM project_items WHERE project_id = ANY($1) ORDER BY created_at`, pq.Array(ids
 
 func (s *Store) GetProject(ctx context.Context, id string) (models.Project, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, name, description, target_amount, current_amount, base_amount, deadline, color, status, created_at, updated_at, asset_id, result_asset_type
+SELECT id, name, description, target_amount, current_amount, base_amount, deadline, color, status, created_at, updated_at, asset_id, result_asset_type, prior_amount
 FROM projects WHERE id=$1`, id)
 	p, err := scanProject(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -357,10 +357,17 @@ func (s *Store) CreateProject(ctx context.Context, in models.ProjectInput) (mode
 	if err := CheckMoney(base); err != nil {
 		return models.Project{}, err
 	}
+	if err := CheckMoney(in.PriorAmount); err != nil {
+		return models.Project{}, err
+	}
+	status := "active"
+	if base > 0 && in.PriorAmount >= base {
+		status = "completed"
+	}
 	_, err = s.db.ExecContext(ctx, `
-INSERT INTO projects (id, name, description, target_amount, current_amount, base_amount, deadline, color, status, result_asset_type)
-VALUES ($1,$2,$3,$4,0,$4,$5,$6,'active',$7)`,
-		id, strings.TrimSpace(in.Name), in.Description, base, deadline, in.Color, in.ResultAssetType)
+INSERT INTO projects (id, name, description, target_amount, current_amount, base_amount, deadline, color, status, result_asset_type, prior_amount)
+VALUES ($1,$2,$3,$4,$8,$4,$5,$6,$9,$7,$8)`,
+		id, strings.TrimSpace(in.Name), in.Description, base, deadline, in.Color, in.ResultAssetType, in.PriorAmount, status)
 	if err != nil {
 		return models.Project{}, err
 	}
@@ -376,14 +383,27 @@ func (s *Store) UpdateProject(ctx context.Context, id string, in models.ProjectI
 	if err := CheckMoney(base); err != nil {
 		return models.Project{}, err
 	}
+	if err := CheckMoney(in.PriorAmount); err != nil {
+		return models.Project{}, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.Project{}, err
 	}
 	defer tx.Rollback()
+	var oldPrior int64
+	err = tx.QueryRowContext(ctx, `SELECT prior_amount FROM projects WHERE id=$1 FOR UPDATE`, id).Scan(&oldPrior)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.Project{}, ErrNotFound
+	}
+	if err != nil {
+		return models.Project{}, err
+	}
+	delta := in.PriorAmount - oldPrior
 	res, err := tx.ExecContext(ctx, `
-UPDATE projects SET name=$2, description=$3, base_amount=$4, deadline=$5, color=$6, result_asset_type=$7, updated_at=NOW()
-WHERE id=$1`, id, strings.TrimSpace(in.Name), in.Description, base, deadline, in.Color, in.ResultAssetType)
+UPDATE projects SET name=$2, description=$3, base_amount=$4, deadline=$5, color=$6, result_asset_type=$7,
+  prior_amount=$8, current_amount=GREATEST(current_amount+$9,0), updated_at=NOW()
+WHERE id=$1`, id, strings.TrimSpace(in.Name), in.Description, base, deadline, in.Color, in.ResultAssetType, in.PriorAmount, delta)
 	if err != nil {
 		return models.Project{}, err
 	}
@@ -1014,7 +1034,7 @@ func scanProject(s scanner) (models.Project, error) {
 	var p models.Project
 	var deadline pq.NullTime
 	var assetID sql.NullString
-	err := s.Scan(&p.ID, &p.Name, &p.Description, &p.TargetAmount, &p.CurrentAmount, &p.BaseAmount, &deadline, &p.Color, &p.Status, &p.CreatedAt, &p.UpdatedAt, &assetID, &p.ResultAssetType)
+	err := s.Scan(&p.ID, &p.Name, &p.Description, &p.TargetAmount, &p.CurrentAmount, &p.BaseAmount, &deadline, &p.Color, &p.Status, &p.CreatedAt, &p.UpdatedAt, &assetID, &p.ResultAssetType, &p.PriorAmount)
 	if deadline.Valid {
 		t := deadline.Time
 		p.Deadline = &t

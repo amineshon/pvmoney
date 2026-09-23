@@ -100,25 +100,54 @@ export default function DebtDetailPage() {
           <div className="space-y-2">
             {items.map((it, idx) => {
               const isLast = idx === items.length - 1 && items.length > 1 && it.amount !== (debt.monthly_amount || items[0].amount);
+              const prior = it.status === "paid" && !it.account_id;
               return (
               <div key={it.id} className="glass flex flex-wrap items-center justify-between gap-3 rounded-[20px] px-4 py-3">
                 <div>
                   <div className="font-medium">
                     {faDate(it.due_date, false, locale)}
-                    {isLast && (
+                    {prior && (
+                      <span className="ms-2 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] text-emerald-300">{t("form.debt.priorBadge")}</span>
+                    )}
+                    {isLast && !prior && (
                       <span className="ms-2 rounded-full bg-gold-400/15 px-2 py-0.5 text-[10px] text-gold-200">{t("debts.lastInst")}</span>
                     )}
                   </div>
                   <div className="text-xs text-white/40">
-                    {it.status === "paid" ? t("debts.paid") : it.status === "overdue" ? t("debts.overdue") : t("debts.pending")}
+                    {prior ? t("form.debt.priorBadge") : it.status === "paid" ? t("debts.paid") : it.status === "overdue" ? t("debts.overdue") : t("debts.pending")}
                     {it.paid_at ? ` · ${faDate(it.paid_at, true, locale)}` : ""}
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className={`font-bold ${isLast ? "text-gold-200" : "text-rose-300"}`}>{toman(it.amount, true, locale)}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className={`font-bold ${isLast && !prior ? "text-gold-200" : prior ? "text-emerald-300" : "text-rose-300"}`}>{toman(it.amount, true, locale)}</div>
                   {it.status !== "paid" && (
-                    <Btn className="py-2 text-xs" onClick={() => setPay({ instId: it.id, amount: it.amount })}>
-                      {t("debts.payInst")}
+                    <>
+                      <Btn className="py-2 text-xs" onClick={() => setPay({ instId: it.id, amount: it.amount })}>
+                        {t("debts.payInst")}
+                      </Btn>
+                      <Btn
+                        kind="ghost"
+                        className="py-2 text-xs"
+                        onClick={async () => {
+                          if (!confirm(t("debts.priorAsk"))) return;
+                          await api.payInstallment(debt.id, it.id, { amount: it.amount, already_paid: true });
+                          load();
+                        }}
+                      >
+                        {t("debts.markPrior")}
+                      </Btn>
+                    </>
+                  )}
+                  {prior && (
+                    <Btn
+                      kind="ghost"
+                      className="py-2 text-xs"
+                      onClick={async () => {
+                        await api.undoPriorInstallment(debt.id, it.id);
+                        load();
+                      }}
+                    >
+                      {t("debts.undoPrior")}
                     </Btn>
                   )}
                 </div>
@@ -137,7 +166,7 @@ export default function DebtDetailPage() {
           onClose={() => setPay(null)}
           onSubmitPay={async (body) => {
             if (pay.instId) await api.payInstallment(debt.id, pay.instId, body);
-            else await api.payDebt(debt.id, body);
+            else await api.payDebt(debt.id, { ...body, already_paid: body.already_paid });
             await load();
           }}
         />

@@ -24,6 +24,7 @@ type ProjectItem struct {
 	Name          string    `json:"name"`
 	PlannedAmount int64     `json:"planned_amount"`
 	PaidAmount    int64     `json:"paid_amount"`
+	PriorAmount   int64     `json:"prior_amount"`
 	Notes         string    `json:"notes"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
@@ -59,6 +60,7 @@ type Project struct {
 	ResultAssetType string        `json:"result_asset_type"`
 	Items           []ProjectItem `json:"items,omitempty"`
 	Asset           *Asset        `json:"asset,omitempty"`
+	PriorAmount     int64         `json:"prior_amount"`
 	CreatedAt       time.Time     `json:"created_at"`
 	UpdatedAt       time.Time     `json:"updated_at"`
 }
@@ -135,18 +137,21 @@ type ProjectInput struct {
 	Deadline        *string `json:"deadline"`
 	Color           string  `json:"color"`
 	ResultAssetType string  `json:"result_asset_type"`
+	PriorAmount     int64   `json:"prior_amount"`
 }
 
 type ItemInput struct {
 	Name          string `json:"name"`
 	PlannedAmount int64  `json:"planned_amount"`
 	Notes         string `json:"notes"`
+	PriorAmount   int64  `json:"prior_amount"`
 }
 
 type PayInput struct {
 	AccountID   string `json:"account_id"`
 	Amount      int64  `json:"amount"`
 	Description string `json:"description"`
+	AlreadyPaid bool   `json:"already_paid"`
 }
 
 type AssetInput struct {
@@ -244,6 +249,7 @@ type DebtInput struct {
 	CommissionAmount     int64   `json:"commission_amount"`
 	CommissionAccountID  *string `json:"commission_account_id"`
 	Count                int     `json:"count"`
+	AlreadyPaidCount     int     `json:"already_paid_count"`
 }
 
 type Settings struct {

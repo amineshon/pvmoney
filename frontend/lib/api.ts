@@ -105,6 +105,8 @@ export const api = {
   payDebt: (id: string, body: unknown) => request(`/api/debts/${id}/pay`, { method: "POST", headers: json, body: JSON.stringify(body) }),
   payInstallment: (debtId: string, instId: string, body: unknown) =>
     request(`/api/debts/${debtId}/installments/${instId}/pay`, { method: "POST", headers: json, body: JSON.stringify(body) }),
+  undoPriorInstallment: (debtId: string, instId: string) =>
+    request(`/api/debts/${debtId}/installments/${instId}/prior`, { method: "DELETE" }),
   telegram: () => request<import("./types").TelegramStatus>("/api/telegram"),
   telegramTest: () => request("/api/telegram/test", { method: "POST" }),
   rates: () => request<import("./rates").Rates>("/api/rates"),
