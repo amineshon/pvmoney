@@ -243,6 +243,7 @@ type DebtInput struct {
 	DueDay               int     `json:"due_day"`
 	CommissionAmount     int64   `json:"commission_amount"`
 	CommissionAccountID  *string `json:"commission_account_id"`
+	Count                int     `json:"count"`
 }
 
 type Settings struct {

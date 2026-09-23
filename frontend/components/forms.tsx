@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Account, Debt, Project } from "@/lib/types";
 import { ACCOUNT_COLORS, ACCOUNT_TYPES, ASSET_TYPES, DEBT_COLORS, DEBT_TYPES, EXPENSE_CATS, INCOME_CATS } from "@/lib/constants";
 import { api } from "@/lib/api";
@@ -8,8 +8,9 @@ import { Btn, ErrorBox, Field, Modal, inputClass } from "./ui";
 import { MoneyInput } from "./MoneyInput";
 import { FxHint } from "./FxHint";
 import { apiError, useI18n } from "@/lib/i18n";
-import { formatMoney, toman } from "@/lib/format";
+import { faDate, formatMoney, toman } from "@/lib/format";
 import { isMarketAsset, liveUnitPrice, type Rates } from "@/lib/rates";
+import { addMonths, autoInstallmentCount, planInstallments, todayISO } from "@/lib/installments";
 
 export function AccountForm({
   initial,
@@ -811,6 +812,10 @@ export function DebtForm({
   onSaved: () => void;
 }) {
   const { t, label, locale } = useI18n();
+  const paidItems = (initial?.installments || []).filter((it) => it.status === "paid");
+  const paidSum = paidItems.reduce((s, it) => s + it.amount, 0);
+  const pendingItems = (initial?.installments || []).filter((it) => it.status !== "paid");
+
   const [name, setName] = useState(initial?.name || "");
   const [type, setType] = useState(initial?.type || "loan");
   const [creditor, setCreditor] = useState(initial?.creditor || "");
@@ -818,25 +823,37 @@ export function DebtForm({
   const [notes, setNotes] = useState(initial?.notes || "");
   const [color, setColor] = useState(initial?.color || DEBT_COLORS[0]);
   const [hasSchedule, setHasSchedule] = useState(initial?.has_schedule ?? true);
-  const [start, setStart] = useState(initial?.start_date ? initial.start_date.slice(0, 10) : "");
-  const [end, setEnd] = useState(initial?.end_date ? initial.end_date.slice(0, 10) : "");
+  const [start, setStart] = useState(firstDueDefault(initial));
   const [monthly, setMonthly] = useState(initial?.monthly_amount || 0);
-  const [dueDay, setDueDay] = useState(initial?.due_day || 1);
+  const [count, setCount] = useState(0);
+  const [countTouched, setCountTouched] = useState(false);
   const [commission, setCommission] = useState(initial?.commission_amount || 0);
   const [commissionAccount, setCommissionAccount] = useState("");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const left = Math.max(0, total - paidSum);
+  const autoCount = autoInstallmentCount(left, monthly);
+  const usedCount = countTouched ? count : autoCount || pendingItems.length;
+
   useEffect(() => {
     api.accounts().then(setAccounts).catch(() => setAccounts([]));
   }, []);
 
-  const months = monthSpan(start, end);
-  const installmentSum = hasSchedule && monthly > 0 && months > 0 ? monthly * months : total;
-  const principal = total > 0 ? total : installmentSum;
-  const netGet = Math.max(0, principal - commission);
-  const allIn = principal + commission;
+  useEffect(() => {
+    if (!countTouched) setCount(autoCount);
+  }, [autoCount, countTouched]);
+
+  const plan = useMemo(
+    () => (hasSchedule ? planInstallments(left, monthly, start, usedCount) : []),
+    [hasSchedule, left, monthly, start, usedCount],
+  );
+  const last = plan[plan.length - 1];
+  const dueDay = start ? Number(start.slice(8, 10)) || 1 : 1;
+  const end = last?.due || start || null;
+  const netGet = Math.max(0, total - commission);
+  const allIn = total + commission;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -852,13 +869,14 @@ export function DebtForm({
         color,
         has_schedule: hasSchedule,
         start_date: start || null,
-        end_date: end || null,
+        end_date: end,
         monthly_amount: monthly,
         due_day: dueDay,
+        count: plan.length,
         commission_amount: commission,
         commission_account_id: !initial && commission > 0 && commissionAccount ? commissionAccount : null,
       };
-      if (initial) await api.updateDebt(initial.id, { ...body, has_schedule: initial.has_schedule });
+      if (initial) await api.updateDebt(initial.id, body);
       else await api.createDebt(body);
       onSaved();
       onClose();
@@ -878,7 +896,7 @@ export function DebtForm({
   }
 
   return (
-    <Modal title={initial ? t("form.debt.edit") : t("form.debt.new")} subtitle={t("form.debt.sub")} onClose={onClose}>
+    <Modal wide title={initial ? t("form.debt.edit") : t("form.debt.new")} subtitle={t("form.debt.sub")} onClose={onClose}>
       <form onSubmit={onSubmit}>
         <ErrorBox message={error} />
         <Field label={t("common.name")}>
@@ -898,44 +916,103 @@ export function DebtForm({
             <input className={inputClass()} value={creditor} onChange={(e) => setCreditor(e.target.value)} placeholder={t("form.debt.creditorPh")} />
           </Field>
         </div>
-        {!initial && (
-          <Field label={t("form.debt.total")}>
-            <MoneyInput value={total} onChange={setTotal} />
-            <p className="mt-1.5 text-xs text-white/40">{t("form.debt.totalHint")}</p>
-          </Field>
+        <Field label={t("form.debt.total")}>
+          <MoneyInput value={total} onChange={setTotal} />
+          <p className="mt-1.5 text-xs text-white/40">{t("form.debt.totalHint")}</p>
+        </Field>
+        {paidSum > 0 && (
+          <div className="mb-4 rounded-2xl border border-amber-400/20 bg-amber-400/8 px-4 py-3 text-sm text-amber-100/80">
+            {t("form.debt.paidKept").replace("{n}", String(paidItems.length)).replace("{a}", toman(paidSum, true, locale))}
+          </div>
         )}
-        {!initial && (
-          <label className="mb-4 flex items-center gap-3 rounded-2xl bg-white/5 px-4 py-3 text-sm">
-            <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} />
-            {t("form.debt.hasSchedule")}
-          </label>
-        )}
-        {!initial && hasSchedule && (
+        <label className="mb-4 flex items-center gap-3 rounded-2xl bg-white/5 px-4 py-3 text-sm">
+          <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} />
+          {t("form.debt.hasSchedule")}
+        </label>
+        {hasSchedule && (
           <>
+            <Field label={t("form.debt.monthly")}>
+              <MoneyInput
+                value={monthly}
+                onChange={(v) => {
+                  setMonthly(v);
+                  setCountTouched(false);
+                }}
+              />
+              <p className="mt-1.5 text-xs text-white/40">{t("form.debt.monthlyHint")}</p>
+            </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label={t("form.debt.start")}>
+              <Field label={t("form.debt.firstDue")}>
                 <input type="date" className={inputClass()} value={start} onChange={(e) => setStart(e.target.value)} required />
               </Field>
-              <Field label={t("form.debt.end")}>
-                <input type="date" className={inputClass()} value={end} onChange={(e) => setEnd(e.target.value)} required />
+              <Field label={t("form.debt.count")}>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="min-h-11 min-w-11 rounded-2xl bg-white/8 text-lg"
+                    onClick={() => {
+                      setCountTouched(true);
+                      setCount((n) => Math.max(1, (n || autoCount) - 1));
+                    }}
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    max={360}
+                    className={inputClass("text-center")}
+                    value={usedCount || ""}
+                    onChange={(e) => {
+                      setCountTouched(true);
+                      setCount(Math.max(1, Number(e.target.value) || 1));
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="min-h-11 min-w-11 rounded-2xl bg-white/8 text-lg"
+                    onClick={() => {
+                      setCountTouched(true);
+                      setCount((n) => Math.min(360, (n || autoCount) + 1));
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
               </Field>
             </div>
-            <Field label={t("form.debt.monthly")}>
-              <MoneyInput value={monthly} onChange={setMonthly} />
-            </Field>
-            <Field label={t("form.debt.dueDay")}>
-              <input
-                type="number"
-                min={1}
-                max={31}
-                className={inputClass()}
-                value={dueDay}
-                onChange={(e) => setDueDay(Number(e.target.value) || 1)}
-              />
-            </Field>
+            {plan.length > 0 && (
+              <div className="mb-4 overflow-hidden rounded-2xl border border-gold-400/20 bg-gold-400/8">
+                <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+                  <span className="text-white/55">{t("form.debt.preview")}</span>
+                  <span className="font-bold text-gold-200">
+                    {plan.length} {t("form.debt.installmentUnit")} · {toman(left, true, locale)}
+                  </span>
+                </div>
+                {last && last.amount !== monthly && monthly > 0 && monthly < left && (
+                  <p className="px-4 pb-2 text-xs text-white/45">{t("form.debt.lastHint")}</p>
+                )}
+                <div className="max-h-52 divide-y divide-white/5 overflow-y-auto">
+                  {plan.map((it) => (
+                    <div key={`${it.due}-${it.index}`} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+                      <div>
+                        <span className="text-white/35">{it.index}.</span>{" "}
+                        <span className="font-medium">{faDate(it.due, false, locale)}</span>
+                        {it.last && it.amount !== monthly && (
+                          <span className="ms-2 rounded-full bg-gold-400/15 px-2 py-0.5 text-[10px] text-gold-200">{t("form.debt.last")}</span>
+                        )}
+                      </div>
+                      <div className={it.last && it.amount !== monthly ? "font-extrabold text-gold-200" : "font-bold"}>
+                        {toman(it.amount, true, locale)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
-        {!initial && !hasSchedule && (
+        {!hasSchedule && (
           <Field label={t("common.date")}>
             <input type="date" className={inputClass()} value={start} onChange={(e) => setStart(e.target.value)} />
           </Field>
@@ -956,12 +1033,14 @@ export function DebtForm({
             </select>
           </Field>
         )}
-        {(principal > 0 || commission > 0) && (
-          <div className="mb-4 space-y-2 rounded-2xl border border-gold-400/20 bg-gold-400/8 px-4 py-3 text-sm">
-            <Row k={t("form.debt.loan")} v={toman(principal, true, locale)} />
+        {(total > 0 || commission > 0) && (
+          <div className="mb-4 space-y-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
+            <Row k={t("form.debt.loan")} v={toman(total, true, locale)} />
+            {hasSchedule && last && last.amount !== monthly && monthly > 0 && (
+              <Row k={t("form.debt.last")} v={toman(last.amount, true, locale)} gold />
+            )}
             <Row k={t("form.debt.feeNow")} v={toman(commission, true, locale)} />
             <Row k={t("form.debt.netReceived")} v={toman(netGet, true, locale)} gold />
-            <Row k={t("form.debt.leftAfter")} v={toman(principal, true, locale)} />
             <div className="border-t border-white/10 pt-2">
               <Row k={t("form.debt.totalCost")} v={toman(allIn, true, locale)} strong />
             </div>
@@ -996,6 +1075,15 @@ export function DebtForm({
       </form>
     </Modal>
   );
+}
+
+function firstDueDefault(initial?: Debt) {
+  if (!initial) return todayISO();
+  const pending = (initial.installments || []).filter((it) => it.status !== "paid");
+  if (pending[0]?.due_date) return pending[0].due_date.slice(0, 10);
+  const paid = (initial.installments || []).filter((it) => it.status === "paid");
+  if (paid.length) return addMonths(paid[paid.length - 1].due_date.slice(0, 10), 1);
+  return initial.start_date ? initial.start_date.slice(0, 10) : todayISO();
 }
 
 export function PayDebtForm({
@@ -1050,14 +1138,6 @@ export function PayDebtForm({
       </form>
     </Modal>
   );
-}
-
-function monthSpan(start: string, end: string) {
-  if (!start || !end) return 0;
-  const a = new Date(`${start}T00:00:00`);
-  const b = new Date(`${end}T00:00:00`);
-  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b < a) return 0;
-  return (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()) + 1;
 }
 
 function Row({ k, v, gold, strong }: { k: string; v: string; gold?: boolean; strong?: boolean }) {

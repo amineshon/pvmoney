@@ -98,30 +98,38 @@ func (s *Store) CreateDebt(ctx context.Context, in models.DebtInput) (models.Deb
 	}
 	defer tx.Rollback()
 
+	if in.TotalAmount <= 0 {
+		return models.Debt{}, fmt.Errorf("%w: total amount required", ErrInvalid)
+	}
+
 	remaining := in.TotalAmount
-	dates := []time.Time{}
+	var amounts []int64
+	var dates []time.Time
 	if in.HasSchedule {
-		st, ok1 := start.(time.Time)
-		en, ok2 := end.(time.Time)
-		if !ok1 || !ok2 {
-			return models.Debt{}, fmt.Errorf("%w: start and end dates required", ErrInvalid)
+		st, ok := start.(time.Time)
+		if !ok {
+			return models.Debt{}, fmt.Errorf("%w: first due date required", ErrInvalid)
 		}
 		if in.MonthlyAmount <= 0 {
-			return models.Debt{}, fmt.Errorf("%w: monthly amount required", ErrInvalid)
+			in.MonthlyAmount = in.TotalAmount
 		}
 		dueDay := in.DueDay
 		if dueDay < 1 || dueDay > 31 {
 			dueDay = st.Day()
 		}
-		dates = generateDueDates(st, en, dueDay)
-		if len(dates) == 0 {
-			return models.Debt{}, fmt.Errorf("%w: no installments in range", ErrInvalid)
-		}
-		remaining = in.MonthlyAmount * int64(len(dates))
-		if in.TotalAmount <= 0 {
-			in.TotalAmount = remaining
-		}
 		in.DueDay = dueDay
+		var errPlan error
+		amounts, dates, errPlan = planInstallments(in.TotalAmount, in.MonthlyAmount, st, dueDay, in.Count)
+		if errPlan != nil {
+			return models.Debt{}, errPlan
+		}
+		remaining = sumAmounts(amounts)
+		end = dates[len(dates)-1]
+	} else if start != nil {
+		if st, ok := start.(time.Time); ok {
+			dates = []time.Time{st}
+			amounts = []int64{in.TotalAmount}
+		}
 	}
 
 	_, err = tx.ExecContext(ctx, `
@@ -131,19 +139,11 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'active')`,
 	if err != nil {
 		return models.Debt{}, err
 	}
-	amount := in.MonthlyAmount
-	if !in.HasSchedule {
-		amount = in.TotalAmount
-		if start != nil {
-			if st, ok := start.(time.Time); ok {
-				dates = []time.Time{st}
-			}
-		}
-	}
-	for _, dt := range dates {
+	for i, dt := range dates {
+		amt := amounts[i]
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO debt_installments (id, debt_id, amount, due_date, status) VALUES ($1,$2,$3,$4,'pending')`,
-			uuid.NewString(), id, amount, dt); err != nil {
+			uuid.NewString(), id, amt, dt); err != nil {
 			return models.Debt{}, err
 		}
 	}
@@ -172,18 +172,116 @@ func deref(s *string) string {
 }
 
 func (s *Store) UpdateDebt(ctx context.Context, id string, in models.DebtInput) (models.Debt, error) {
+	if strings.TrimSpace(in.Name) == "" {
+		return models.Debt{}, fmt.Errorf("%w: name is required", ErrInvalid)
+	}
+	if err := CheckMoney(in.TotalAmount); err != nil {
+		return models.Debt{}, err
+	}
+	if err := CheckMoney(in.MonthlyAmount); err != nil {
+		return models.Debt{}, err
+	}
 	if err := CheckMoney(in.CommissionAmount); err != nil {
 		return models.Debt{}, err
 	}
-	res, err := s.db.ExecContext(ctx, `
-UPDATE debts SET name=$2, type=$3, creditor=$4, notes=$5, color=$6, commission_amount=$7, updated_at=NOW() WHERE id=$1`,
-		id, strings.TrimSpace(in.Name), in.Type, in.Creditor, in.Notes, in.Color, in.CommissionAmount)
+	if in.TotalAmount <= 0 {
+		return models.Debt{}, fmt.Errorf("%w: total amount required", ErrInvalid)
+	}
+	start, err := parseDate(in.StartDate)
+	if err != nil {
+		return models.Debt{}, err
+	}
+	end, err := parseDate(in.EndDate)
+	if err != nil {
+		return models.Debt{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.Debt{}, err
+	}
+	defer tx.Rollback()
+
+	var exists string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM debts WHERE id=$1 FOR UPDATE`, id).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.Debt{}, ErrNotFound
+	}
+	if err != nil {
+		return models.Debt{}, err
+	}
+
+	var paidSum int64
+	if err := tx.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(amount),0) FROM debt_installments WHERE debt_id=$1 AND status='paid'`, id).Scan(&paidSum); err != nil {
+		return models.Debt{}, err
+	}
+	if in.TotalAmount < paidSum {
+		return models.Debt{}, fmt.Errorf("%w: total is less than already paid", ErrInvalid)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM debt_installments WHERE debt_id=$1 AND status<>'paid'`, id); err != nil {
+		return models.Debt{}, err
+	}
+
+	left := in.TotalAmount - paidSum
+	remaining := left
+	if in.Type == "" {
+		in.Type = "loan"
+	}
+
+	if in.HasSchedule && left > 0 {
+		st, ok := start.(time.Time)
+		if !ok {
+			return models.Debt{}, fmt.Errorf("%w: first due date required", ErrInvalid)
+		}
+		if in.MonthlyAmount <= 0 {
+			in.MonthlyAmount = left
+		}
+		dueDay := in.DueDay
+		if dueDay < 1 || dueDay > 31 {
+			dueDay = st.Day()
+		}
+		in.DueDay = dueDay
+		amounts, dates, errPlan := planInstallments(left, in.MonthlyAmount, st, dueDay, in.Count)
+		if errPlan != nil {
+			return models.Debt{}, errPlan
+		}
+		remaining = sumAmounts(amounts)
+		end = dates[len(dates)-1]
+		for i, dt := range dates {
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO debt_installments (id, debt_id, amount, due_date, status) VALUES ($1,$2,$3,$4,'pending')`,
+				uuid.NewString(), id, amounts[i], dt); err != nil {
+				return models.Debt{}, err
+			}
+		}
+	} else if !in.HasSchedule {
+		end = start
+	}
+
+	status := "active"
+	if remaining <= 0 {
+		status = "paid"
+		remaining = 0
+	}
+
+	res, err := tx.ExecContext(ctx, `
+UPDATE debts SET name=$2, type=$3, creditor=$4, notes=$5, color=$6, commission_amount=$7,
+  total_amount=$8, remaining=$9, has_schedule=$10, start_date=$11, end_date=$12,
+  monthly_amount=$13, due_day=$14, status=$15, updated_at=NOW()
+WHERE id=$1`,
+		id, strings.TrimSpace(in.Name), in.Type, in.Creditor, in.Notes, in.Color, in.CommissionAmount,
+		in.TotalAmount, remaining, in.HasSchedule, start, end, in.MonthlyAmount, in.DueDay, status)
 	if err != nil {
 		return models.Debt{}, err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return models.Debt{}, ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return models.Debt{}, err
 	}
 	return s.GetDebt(ctx, id)
 }
@@ -401,6 +499,79 @@ func generateDueDates(start, end time.Time, dueDay int) []time.Time {
 		}
 	}
 	return out
+}
+
+func planInstallments(total, monthly int64, first time.Time, dueDay, count int) ([]int64, []time.Time, error) {
+	amounts, err := splitAmounts(total, monthly, count)
+	if err != nil {
+		return nil, nil, err
+	}
+	dates := datesFromFirst(first, dueDay, len(amounts))
+	if len(dates) != len(amounts) {
+		return nil, nil, fmt.Errorf("%w: could not build dates", ErrInvalid)
+	}
+	return amounts, dates, nil
+}
+
+func splitAmounts(total, monthly int64, count int) ([]int64, error) {
+	if total <= 0 {
+		return nil, fmt.Errorf("%w: total amount required", ErrInvalid)
+	}
+	if monthly <= 0 || monthly > total {
+		monthly = total
+	}
+	auto := int(total / monthly)
+	if total%monthly != 0 {
+		auto++
+	}
+	if auto < 1 {
+		auto = 1
+	}
+	if count <= 0 {
+		count = auto
+	}
+	if count > 360 {
+		return nil, fmt.Errorf("%w: too many installments", ErrInvalid)
+	}
+	if int64(count-1)*monthly >= total {
+		count = auto
+	}
+	last := total - monthly*int64(count-1)
+	if last <= 0 {
+		return nil, fmt.Errorf("%w: last installment invalid", ErrInvalid)
+	}
+	out := make([]int64, count)
+	for i := 0; i < count-1; i++ {
+		out[i] = monthly
+	}
+	out[count-1] = last
+	return out, nil
+}
+
+func datesFromFirst(first time.Time, dueDay, count int) []time.Time {
+	loc := tehran()
+	first = first.In(loc)
+	if dueDay < 1 || dueDay > 31 {
+		dueDay = first.Day()
+	}
+	cur := clampDate(first.Year(), first.Month(), dueDay, loc)
+	if cur.Before(time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, loc)) {
+		cur = nextMonth(cur, dueDay)
+	}
+	out := make([]time.Time, 0, count)
+	for i := 0; i < count; i++ {
+		out = append(out, cur)
+		cur = nextMonth(cur, dueDay)
+	}
+	return out
+}
+
+func sumAmounts(items []int64) int64 {
+	var n int64
+	for _, v := range items {
+		n += v
+	}
+	return n
 }
 
 func nextMonth(t time.Time, dueDay int) time.Time {
