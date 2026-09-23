@@ -113,7 +113,13 @@ func EvConvert(name string, value int64) Event {
 }
 
 func EvDebtNew(d models.Debt) Event {
-	return Event{Icon: "📉", EN: fmt.Sprintf("Debt added\n%s\n%s", d.Name, toman(d.Remaining)), DE: fmt.Sprintf("Schuld hinzugefügt\n%s\n%s", d.Name, toman(d.Remaining))}
+	en := fmt.Sprintf("Debt added\n%s\nRemaining: %s", d.Name, toman(d.Remaining))
+	de := fmt.Sprintf("Schuld hinzugefügt\n%s\nRest: %s", d.Name, toman(d.Remaining))
+	if d.CommissionAmount > 0 {
+		en += fmt.Sprintf("\nFee: %s\nNet received: %s", toman(d.CommissionAmount), toman(d.NetReceived))
+		de += fmt.Sprintf("\nGebühr: %s\nNetto: %s", toman(d.CommissionAmount), toman(d.NetReceived))
+	}
+	return Event{Icon: "📉", EN: en, DE: de}
 }
 
 func EvDebtUpd(d models.Debt) Event {

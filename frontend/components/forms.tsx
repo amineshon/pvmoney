@@ -810,7 +810,7 @@ export function DebtForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const { t, label } = useI18n();
+  const { t, label, locale } = useI18n();
   const [name, setName] = useState(initial?.name || "");
   const [type, setType] = useState(initial?.type || "loan");
   const [creditor, setCreditor] = useState(initial?.creditor || "");
@@ -822,8 +822,21 @@ export function DebtForm({
   const [end, setEnd] = useState(initial?.end_date ? initial.end_date.slice(0, 10) : "");
   const [monthly, setMonthly] = useState(initial?.monthly_amount || 0);
   const [dueDay, setDueDay] = useState(initial?.due_day || 1);
+  const [commission, setCommission] = useState(initial?.commission_amount || 0);
+  const [commissionAccount, setCommissionAccount] = useState("");
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api.accounts().then(setAccounts).catch(() => setAccounts([]));
+  }, []);
+
+  const months = monthSpan(start, end);
+  const installmentSum = hasSchedule && monthly > 0 && months > 0 ? monthly * months : total;
+  const principal = total > 0 ? total : installmentSum;
+  const netGet = Math.max(0, principal - commission);
+  const allIn = principal + commission;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -842,6 +855,8 @@ export function DebtForm({
         end_date: end || null,
         monthly_amount: monthly,
         due_day: dueDay,
+        commission_amount: commission,
+        commission_account_id: !initial && commission > 0 && commissionAccount ? commissionAccount : null,
       };
       if (initial) await api.updateDebt(initial.id, { ...body, has_schedule: initial.has_schedule });
       else await api.createDebt(body);
@@ -886,6 +901,7 @@ export function DebtForm({
         {!initial && (
           <Field label={t("form.debt.total")}>
             <MoneyInput value={total} onChange={setTotal} />
+            <p className="mt-1.5 text-xs text-white/40">{t("form.debt.totalHint")}</p>
           </Field>
         )}
         {!initial && (
@@ -923,6 +939,33 @@ export function DebtForm({
           <Field label={t("common.date")}>
             <input type="date" className={inputClass()} value={start} onChange={(e) => setStart(e.target.value)} />
           </Field>
+        )}
+        <Field label={t("form.debt.commission")}>
+          <MoneyInput value={commission} onChange={setCommission} />
+          <p className="mt-1.5 text-xs text-white/40">{t("form.debt.commissionHint")}</p>
+        </Field>
+        {!initial && commission > 0 && accounts.length > 0 && (
+          <Field label={t("form.debt.commissionAccount")}>
+            <select className={inputClass()} value={commissionAccount} onChange={(e) => setCommissionAccount(e.target.value)}>
+              <option value="">{t("form.debt.commissionSkip")}</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {(principal > 0 || commission > 0) && (
+          <div className="mb-4 space-y-2 rounded-2xl border border-gold-400/20 bg-gold-400/8 px-4 py-3 text-sm">
+            <Row k={t("form.debt.loan")} v={toman(principal, true, locale)} />
+            <Row k={t("form.debt.feeNow")} v={toman(commission, true, locale)} />
+            <Row k={t("form.debt.netReceived")} v={toman(netGet, true, locale)} gold />
+            <Row k={t("form.debt.leftAfter")} v={toman(principal, true, locale)} />
+            <div className="border-t border-white/10 pt-2">
+              <Row k={t("form.debt.totalCost")} v={toman(allIn, true, locale)} strong />
+            </div>
+          </div>
         )}
         <Field label={t("common.note")}>
           <input className={inputClass()} value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -1006,5 +1049,22 @@ export function PayDebtForm({
         </Btn>
       </form>
     </Modal>
+  );
+}
+
+function monthSpan(start: string, end: string) {
+  if (!start || !end) return 0;
+  const a = new Date(`${start}T00:00:00`);
+  const b = new Date(`${end}T00:00:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b < a) return 0;
+  return (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()) + 1;
+}
+
+function Row({ k, v, gold, strong }: { k: string; v: string; gold?: boolean; strong?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-white/50">{k}</span>
+      <span className={`${strong ? "font-extrabold" : "font-bold"} ${gold ? "text-gold-200" : "text-white"}`}>{v}</span>
+    </div>
   );
 }

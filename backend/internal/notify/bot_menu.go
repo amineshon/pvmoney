@@ -217,6 +217,9 @@ func (b *Bot) showDebts(ctx context.Context, chat int64, msgID int) {
 			st = b.t("paid")
 		}
 		fmt.Fprintf(&sb, "\n• %s (%s)\n  %s", d.Name, st, toman(d.Remaining))
+		if d.CommissionAmount > 0 {
+			fmt.Fprintf(&sb, "\n  💳 fee %s · net %s", toman(d.CommissionAmount), toman(d.NetReceived))
+		}
 		if d.Creditor != "" {
 			fmt.Fprintf(&sb, " · %s", d.Creditor)
 		}

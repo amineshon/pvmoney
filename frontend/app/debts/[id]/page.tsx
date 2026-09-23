@@ -56,6 +56,22 @@ export default function DebtDetailPage() {
               <div className="text-2xl font-bold">{toman(debt.total_amount, true, locale)}</div>
             </div>
           </div>
+          {(debt.commission_amount || 0) > 0 && (
+            <div className="mt-5 grid gap-2 rounded-2xl border border-gold-400/20 bg-gold-400/8 px-4 py-3 text-sm sm:grid-cols-3">
+              <div>
+                <div className="text-[11px] text-white/40">{t("debts.commission")}</div>
+                <div className="font-bold">{toman(debt.commission_amount || 0, true, locale)}</div>
+              </div>
+              <div>
+                <div className="text-[11px] text-white/40">{t("debts.netReceived")}</div>
+                <div className="font-bold text-gold-200">{toman(debt.net_received || 0, true, locale)}</div>
+              </div>
+              <div>
+                <div className="text-[11px] text-white/40">{t("debts.totalCost")}</div>
+                <div className="font-extrabold">{toman(debt.total_cost || 0, true, locale)}</div>
+              </div>
+            </div>
+          )}
           {debt.has_schedule && debt.start_date && debt.end_date && (
             <div className="mt-4 text-sm text-white/45">
               {t("debts.schedule")}: {faDate(debt.start_date, false, locale)} {t("debts.until")} {faDate(debt.end_date, false, locale)}

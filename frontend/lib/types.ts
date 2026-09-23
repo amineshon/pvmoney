@@ -92,6 +92,9 @@ export type Debt = {
   creditor: string;
   total_amount: number;
   remaining: number;
+  commission_amount?: number;
+  total_cost?: number;
+  net_received?: number;
   notes: string;
   color: string;
   has_schedule: boolean;

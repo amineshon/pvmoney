@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS auth_challenges (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_challenges_status ON auth_challenges (status, expires_at);
+ALTER TABLE debts ADD COLUMN IF NOT EXISTS commission_amount BIGINT NOT NULL DEFAULT 0;
 `)
 	if err != nil {
 		return err

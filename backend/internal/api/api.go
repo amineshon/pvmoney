@@ -433,8 +433,7 @@ func (s *Server) getDebt(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createDebt(w http.ResponseWriter, r *http.Request) {
 	var in models.DebtInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+	if !decodeBody(w, r, &in) {
 		return
 	}
 	item, err := s.store.CreateDebt(r.Context(), in)
@@ -448,8 +447,7 @@ func (s *Server) createDebt(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateDebt(w http.ResponseWriter, r *http.Request) {
 	var in models.DebtInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+	if !decodeBody(w, r, &in) {
 		return
 	}
 	item, err := s.store.UpdateDebt(r.Context(), chi.URLParam(r, "id"), in)

@@ -198,9 +198,12 @@ type Debt struct {
 	Name          string        `json:"name"`
 	Type          string        `json:"type"`
 	Creditor      string        `json:"creditor"`
-	TotalAmount   int64         `json:"total_amount"`
-	Remaining     int64         `json:"remaining"`
-	Notes         string        `json:"notes"`
+	TotalAmount       int64         `json:"total_amount"`
+	Remaining         int64         `json:"remaining"`
+	CommissionAmount  int64         `json:"commission_amount"`
+	TotalCost         int64         `json:"total_cost"`
+	NetReceived       int64         `json:"net_received"`
+	Notes             string        `json:"notes"`
 	Color         string        `json:"color"`
 	HasSchedule   bool          `json:"has_schedule"`
 	StartDate     *time.Time    `json:"start_date,omitempty"`
@@ -230,14 +233,16 @@ type DebtInput struct {
 	Name          string  `json:"name"`
 	Type          string  `json:"type"`
 	Creditor      string  `json:"creditor"`
-	TotalAmount   int64   `json:"total_amount"`
-	Notes         string  `json:"notes"`
-	Color         string  `json:"color"`
-	HasSchedule   bool    `json:"has_schedule"`
-	StartDate     *string `json:"start_date"`
-	EndDate       *string `json:"end_date"`
-	MonthlyAmount int64   `json:"monthly_amount"`
-	DueDay        int     `json:"due_day"`
+	TotalAmount          int64   `json:"total_amount"`
+	Notes                string  `json:"notes"`
+	Color                string  `json:"color"`
+	HasSchedule          bool    `json:"has_schedule"`
+	StartDate            *string `json:"start_date"`
+	EndDate              *string `json:"end_date"`
+	MonthlyAmount        int64   `json:"monthly_amount"`
+	DueDay               int     `json:"due_day"`
+	CommissionAmount     int64   `json:"commission_amount"`
+	CommissionAccountID  *string `json:"commission_account_id"`
 }
 
 type Settings struct {

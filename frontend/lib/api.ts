@@ -19,11 +19,16 @@ function headers(extra?: HeadersInit): Headers {
 }
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(url, {
-    credentials: "include",
-    ...init,
-    headers: headers(init.headers),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      credentials: "include",
+      ...init,
+      headers: headers(init.headers),
+    });
+  } catch {
+    throw new Error("network");
+  }
   if (res.status === 401 && typeof window !== "undefined" && !url.startsWith("/api/auth/")) {
     window.dispatchEvent(new Event("pvmoney:unauthorized"));
   }

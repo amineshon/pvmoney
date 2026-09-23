@@ -111,6 +111,13 @@ export default function DebtsPage() {
                   <div>
                     <div className="text-[11px] text-white/40">{t("common.remaining")}</div>
                     <div className="text-xl font-extrabold text-rose-300">{toman(d.remaining, true, locale)}</div>
+                    {(d.commission_amount || 0) > 0 && (
+                      <div className="mt-1 text-[11px] text-white/40">
+                        {t("debts.commission")} {toman(d.commission_amount || 0, true, locale)}
+                        <span className="text-white/25"> · </span>
+                        {t("debts.netReceived")} {toman(d.net_received || 0, true, locale)}
+                      </div>
+                    )}
                   </div>
                   <div className="text-end text-xs text-white/40">
                     {d.has_schedule ? t("debts.schedule") : t("debts.noSchedule")}

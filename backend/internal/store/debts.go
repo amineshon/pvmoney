@@ -24,7 +24,7 @@ func tehran() *time.Location {
 
 func (s *Store) ListDebts(ctx context.Context) ([]models.Debt, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT d.id, d.name, d.type, d.creditor, d.total_amount, d.remaining, d.notes, d.color,
+SELECT d.id, d.name, d.type, d.creditor, d.total_amount, d.remaining, d.commission_amount, d.notes, d.color,
        d.has_schedule, d.start_date, d.end_date, d.monthly_amount, d.due_day, d.status, d.created_at, d.updated_at,
        (SELECT MIN(due_date) FROM debt_installments i WHERE i.debt_id=d.id AND i.status='pending')
 FROM debts d ORDER BY d.created_at DESC`)
@@ -45,7 +45,7 @@ FROM debts d ORDER BY d.created_at DESC`)
 
 func (s *Store) GetDebt(ctx context.Context, id string) (models.Debt, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT d.id, d.name, d.type, d.creditor, d.total_amount, d.remaining, d.notes, d.color,
+SELECT d.id, d.name, d.type, d.creditor, d.total_amount, d.remaining, d.commission_amount, d.notes, d.color,
        d.has_schedule, d.start_date, d.end_date, d.monthly_amount, d.due_day, d.status, d.created_at, d.updated_at,
        (SELECT MIN(due_date) FROM debt_installments i WHERE i.debt_id=d.id AND i.status='pending')
 FROM debts d WHERE d.id=$1`, id)
@@ -67,6 +67,9 @@ FROM debts d WHERE d.id=$1`, id)
 func (s *Store) CreateDebt(ctx context.Context, in models.DebtInput) (models.Debt, error) {
 	if strings.TrimSpace(in.Name) == "" {
 		return models.Debt{}, fmt.Errorf("%w: name is required", ErrInvalid)
+	}
+	if err := CheckMoney(in.CommissionAmount); err != nil {
+		return models.Debt{}, err
 	}
 	if in.Type == "" {
 		in.Type = "loan"
@@ -116,9 +119,9 @@ func (s *Store) CreateDebt(ctx context.Context, in models.DebtInput) (models.Deb
 	}
 
 	_, err = tx.ExecContext(ctx, `
-INSERT INTO debts (id, name, type, creditor, total_amount, remaining, notes, color, has_schedule, start_date, end_date, monthly_amount, due_day, status)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'active')`,
-		id, strings.TrimSpace(in.Name), in.Type, in.Creditor, in.TotalAmount, remaining, in.Notes, in.Color, in.HasSchedule, start, end, in.MonthlyAmount, in.DueDay)
+INSERT INTO debts (id, name, type, creditor, total_amount, remaining, commission_amount, notes, color, has_schedule, start_date, end_date, monthly_amount, due_day, status)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'active')`,
+		id, strings.TrimSpace(in.Name), in.Type, in.Creditor, in.TotalAmount, remaining, in.CommissionAmount, in.Notes, in.Color, in.HasSchedule, start, end, in.MonthlyAmount, in.DueDay)
 	if err != nil {
 		return models.Debt{}, err
 	}
@@ -138,16 +141,37 @@ INSERT INTO debt_installments (id, debt_id, amount, due_date, status) VALUES ($1
 			return models.Debt{}, err
 		}
 	}
+	if acc := strings.TrimSpace(deref(in.CommissionAccountID)); acc != "" && in.CommissionAmount > 0 {
+		if err := changeBalance(ctx, tx, acc, -in.CommissionAmount); err != nil {
+			return models.Debt{}, err
+		}
+		desc := "کارمزد " + strings.TrimSpace(in.Name)
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO transactions (id, account_id, type, amount, category, description, occurred_at, created_at)
+VALUES ($1,$2,'expense',$3,'debt',$4,NOW(),NOW())`, uuid.NewString(), acc, in.CommissionAmount, desc); err != nil {
+			return models.Debt{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return models.Debt{}, err
 	}
 	return s.GetDebt(ctx, id)
 }
 
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func (s *Store) UpdateDebt(ctx context.Context, id string, in models.DebtInput) (models.Debt, error) {
+	if err := CheckMoney(in.CommissionAmount); err != nil {
+		return models.Debt{}, err
+	}
 	res, err := s.db.ExecContext(ctx, `
-UPDATE debts SET name=$2, type=$3, creditor=$4, notes=$5, color=$6, updated_at=NOW() WHERE id=$1`,
-		id, strings.TrimSpace(in.Name), in.Type, in.Creditor, in.Notes, in.Color)
+UPDATE debts SET name=$2, type=$3, creditor=$4, notes=$5, color=$6, commission_amount=$7, updated_at=NOW() WHERE id=$1`,
+		id, strings.TrimSpace(in.Name), in.Type, in.Creditor, in.Notes, in.Color, in.CommissionAmount)
 	if err != nil {
 		return models.Debt{}, err
 	}
@@ -399,10 +423,10 @@ func scanDebt(s scanner, withNext bool) (models.Debt, error) {
 	var start, end, next pq.NullTime
 	var err error
 	if withNext {
-		err = s.Scan(&d.ID, &d.Name, &d.Type, &d.Creditor, &d.TotalAmount, &d.Remaining, &d.Notes, &d.Color,
+		err = s.Scan(&d.ID, &d.Name, &d.Type, &d.Creditor, &d.TotalAmount, &d.Remaining, &d.CommissionAmount, &d.Notes, &d.Color,
 			&d.HasSchedule, &start, &end, &d.MonthlyAmount, &d.DueDay, &d.Status, &d.CreatedAt, &d.UpdatedAt, &next)
 	} else {
-		err = s.Scan(&d.ID, &d.Name, &d.Type, &d.Creditor, &d.TotalAmount, &d.Remaining, &d.Notes, &d.Color,
+		err = s.Scan(&d.ID, &d.Name, &d.Type, &d.Creditor, &d.TotalAmount, &d.Remaining, &d.CommissionAmount, &d.Notes, &d.Color,
 			&d.HasSchedule, &start, &end, &d.MonthlyAmount, &d.DueDay, &d.Status, &d.CreatedAt, &d.UpdatedAt)
 	}
 	if start.Valid {
@@ -416,6 +440,11 @@ func scanDebt(s scanner, withNext bool) (models.Debt, error) {
 	if next.Valid {
 		t := next.Time
 		d.NextDue = &t
+	}
+	d.TotalCost = d.TotalAmount + d.CommissionAmount
+	d.NetReceived = d.TotalAmount - d.CommissionAmount
+	if d.NetReceived < 0 {
+		d.NetReceived = 0
 	}
 	return d, err
 }
