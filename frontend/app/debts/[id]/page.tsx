@@ -8,6 +8,7 @@ import { faDate, toman } from "@/lib/format";
 import { Btn } from "@/components/ui";
 import { DebtForm, PayDebtForm } from "@/components/forms";
 import { InstallmentTimeline } from "@/components/InstallmentTimeline";
+import { DebtLogo } from "@/components/DebtLogo";
 import { apiError, useI18n } from "@/lib/i18n";
 
 export default function DebtDetailPage() {
@@ -42,10 +43,15 @@ export default function DebtDetailPage() {
       <div className="glass relative overflow-hidden rounded-[32px] p-8">
         <div className="absolute -end-10 -top-10 h-32 w-32 rounded-full opacity-20" style={{ background: debt.color }} />
         <div className="relative">
-          <div className="text-sm text-white/40">{label(debt.type)}</div>
-          <h1 className="mt-1 text-3xl font-black">{debt.name}</h1>
-          {debt.creditor && <p className="mt-2 text-white/55">{debt.creditor}</p>}
-          {debt.notes && <p className="mt-2 text-sm text-white/40">{debt.notes}</p>}
+          <div className="flex items-start gap-4">
+            <DebtLogo debtId={debt.id} hasLogo={debt.has_logo} name={debt.name} color={debt.color} size="lg" rev={debt.updated_at} />
+            <div className="min-w-0">
+              <div className="text-sm text-white/40">{label(debt.type)}</div>
+              <h1 className="mt-1 text-3xl font-black">{debt.name}</h1>
+              {debt.creditor && <p className="mt-2 text-white/55">{debt.creditor}</p>}
+            </div>
+          </div>
+          {debt.notes && <p className="mt-3 text-sm text-white/40">{debt.notes}</p>}
           <div className="mt-8 flex items-end justify-between">
             <div>
               <div className="text-xs text-white/40">{t("common.remaining")}</div>

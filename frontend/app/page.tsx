@@ -4,12 +4,13 @@ import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { Dashboard } from "@/lib/types";
-import { greeting, toman, progress, faDate, formatUSD, formatEUR } from "@/lib/format";
+import { greeting, toman, progress, formatUSD, formatEUR } from "@/lib/format";
 import { AccountCard } from "@/components/AccountCard";
 import { ProjectCard } from "@/components/ProjectCard";
 import { TransactionRow } from "@/components/TransactionRow";
 import { Btn, Empty } from "@/components/ui";
 import { AccountForm, ProjectForm } from "@/components/forms";
+import { DueBoard } from "@/components/DueBoard";
 import Link from "next/link";
 import { ArrowUpRight, Sparkles, WalletCards, Gem, HandCoins } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
@@ -135,21 +136,10 @@ export default function HomePage() {
 
       <section className="mt-10">
         <Header title={t("dash.debtsTitle")} href="/debts" />
-        {!data.upcoming?.length ? (
+        {!data.upcoming?.length && !(data.debts_remaining || 0) ? (
           <Empty title={t("dash.noDebts")} text={t("debts.empty.text")} />
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {data.upcoming.slice(0, 6).map((it) => (
-              <Link key={it.id} href={`/debts/${it.debt_id}`} className="glass rounded-[24px] p-4">
-                <div className="text-xs text-white/40">{it.creditor || t("dash.due")}</div>
-                <div className="mt-1 font-bold">{it.debt_name}</div>
-                <div className="mt-2 flex items-end justify-between">
-                  <div className="text-rose-300">{toman(it.amount, true, locale)}</div>
-                  <div className="text-xs text-white/40">{faDate(it.due_date, false, locale)}</div>
-                </div>
-              </Link>
-            ))}
-          </div>
+          <DueBoard remaining={data.debts_remaining || 0} items={data.upcoming || []} />
         )}
       </section>
 

@@ -7,6 +7,8 @@ import { api } from "@/lib/api";
 import { Btn, ErrorBox, Field, Modal, inputClass } from "./ui";
 import { MoneyInput } from "./MoneyInput";
 import { DateField } from "./DateField";
+import { DebtLogo } from "./DebtLogo";
+import { compressLogo } from "@/lib/logo";
 import { FxHint } from "./FxHint";
 import { apiError, useI18n } from "@/lib/i18n";
 import { faDate, formatMoney, toman } from "@/lib/format";
@@ -852,6 +854,9 @@ export function DebtForm({
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [logoBlob, setLogoBlob] = useState<Blob | null>(null);
+  const [logoPreview, setLogoPreview] = useState("");
+  const [removeLogo, setRemoveLogo] = useState(false);
 
   const left = Math.max(0, total - accountPaidSum);
   const autoCount = autoInstallmentCount(left, monthly);
@@ -860,6 +865,13 @@ export function DebtForm({
   useEffect(() => {
     api.accounts().then(setAccounts).catch(() => setAccounts([]));
   }, []);
+
+  useEffect(() => {
+    if (!logoBlob) return;
+    const url = URL.createObjectURL(logoBlob);
+    setLogoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [logoBlob]);
 
   useEffect(() => {
     if (!countTouched) setCount(autoCount);
@@ -897,8 +909,9 @@ export function DebtForm({
         commission_amount: commission,
         commission_account_id: !initial && commission > 0 && commissionAccount ? commissionAccount : null,
       };
-      if (initial) await api.updateDebt(initial.id, body);
-      else await api.createDebt(body);
+      const saved = initial ? await api.updateDebt(initial.id, body) : await api.createDebt(body);
+      if (removeLogo && initial) await api.deleteDebtLogo(saved.id);
+      if (logoBlob) await api.uploadDebtLogo(saved.id, logoBlob);
       onSaved();
       onClose();
     } catch (err) {
@@ -920,6 +933,53 @@ export function DebtForm({
     <Modal wide title={initial ? t("form.debt.edit") : t("form.debt.new")} subtitle={t("form.debt.sub")} onClose={onClose}>
       <form onSubmit={onSubmit}>
         <ErrorBox message={error} />
+        <div className="mb-5 flex items-center gap-4">
+          <label className="relative shrink-0 cursor-pointer">
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                try {
+                  const blob = await compressLogo(file);
+                  setRemoveLogo(false);
+                  setLogoBlob(blob);
+                } catch {
+                  setError(t("form.debt.logoBad"));
+                }
+              }}
+            />
+            {logoPreview ? (
+              <img src={logoPreview} alt="" className="h-20 w-20 rounded-2xl object-cover ring-1 ring-white/10" />
+            ) : initial?.has_logo && !removeLogo ? (
+              <DebtLogo debtId={initial.id} hasLogo name={name || initial.name} color={color} size="lg" rev={initial.updated_at} />
+            ) : (
+              <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-dashed border-gold-400/35 bg-gold-400/8 text-center text-[11px] font-bold leading-tight text-gold-200">
+                {t("form.debt.logo")}
+              </div>
+            )}
+          </label>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">{t("form.debt.logoTitle")}</p>
+            <p className="mt-1 text-xs text-white/40">{t("form.debt.logoHint")}</p>
+            {(logoPreview || (initial?.has_logo && !removeLogo)) && (
+              <button
+                type="button"
+                className="mt-2 text-xs text-white/45 hover:text-rose-300"
+                onClick={() => {
+                  setLogoBlob(null);
+                  setLogoPreview("");
+                  setRemoveLogo(true);
+                }}
+              >
+                {t("form.debt.logoRemove")}
+              </button>
+            )}
+          </div>
+        </div>
         <Field label={t("common.name")}>
           <input className={inputClass()} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("form.debt.namePh")} required />
         </Field>

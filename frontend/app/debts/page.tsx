@@ -7,6 +7,7 @@ import { Debt, TelegramStatus } from "@/lib/types";
 import { faDate, toman } from "@/lib/format";
 import { Btn, Empty } from "@/components/ui";
 import { DebtForm } from "@/components/forms";
+import { DebtLogo } from "@/components/DebtLogo";
 import { apiError, useI18n } from "@/lib/i18n";
 
 export default function DebtsPage() {
@@ -98,10 +99,13 @@ export default function DebtsPage() {
               <div className="absolute -end-8 -top-8 h-24 w-24 rounded-full opacity-25" style={{ background: d.color }} />
               <div className="relative">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-xs text-white/40">{label(d.type)}</div>
-                    <h3 className="mt-1 text-lg font-bold">{d.name}</h3>
-                    {d.creditor && <div className="text-sm text-white/45">{d.creditor}</div>}
+                  <div className="flex min-w-0 items-start gap-3">
+                    <DebtLogo debtId={d.id} hasLogo={d.has_logo} name={d.name} color={d.color} rev={d.updated_at} />
+                    <div className="min-w-0">
+                      <div className="text-xs text-white/40">{label(d.type)}</div>
+                      <h3 className="mt-1 text-lg font-bold">{d.name}</h3>
+                      {d.creditor && <div className="text-sm text-white/45">{d.creditor}</div>}
+                    </div>
                   </div>
                   <span className={`rounded-full px-2 py-1 text-[11px] ${d.status === "paid" ? "bg-emerald-400/15 text-emerald-300" : "bg-rose-400/15 text-rose-300"}`}>
                     {d.status === "paid" ? t("debts.paid") : t("debts.active")}

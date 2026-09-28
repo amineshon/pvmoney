@@ -99,14 +99,31 @@ export const api = {
   deleteTx: (id: string) => request(`/api/transactions/${id}`, { method: "DELETE" }),
   debts: () => request<import("./types").Debt[]>("/api/debts"),
   debt: (id: string) => request<import("./types").Debt>(`/api/debts/${id}`),
-  createDebt: (body: unknown) => request("/api/debts", { method: "POST", headers: json, body: JSON.stringify(body) }),
-  updateDebt: (id: string, body: unknown) => request(`/api/debts/${id}`, { method: "PUT", headers: json, body: JSON.stringify(body) }),
+  createDebt: (body: unknown) => request<import("./types").Debt>("/api/debts", { method: "POST", headers: json, body: JSON.stringify(body) }),
+  updateDebt: (id: string, body: unknown) => request<import("./types").Debt>(`/api/debts/${id}`, { method: "PUT", headers: json, body: JSON.stringify(body) }),
   deleteDebt: (id: string) => request(`/api/debts/${id}`, { method: "DELETE" }),
   payDebt: (id: string, body: unknown) => request(`/api/debts/${id}/pay`, { method: "POST", headers: json, body: JSON.stringify(body) }),
   payInstallment: (debtId: string, instId: string, body: unknown) =>
     request(`/api/debts/${debtId}/installments/${instId}/pay`, { method: "POST", headers: json, body: JSON.stringify(body) }),
   undoPriorInstallment: (debtId: string, instId: string) =>
     request(`/api/debts/${debtId}/installments/${instId}/prior`, { method: "DELETE" }),
+  uploadDebtLogo: (id: string, file: Blob) => {
+    const body = new FormData();
+    body.append("file", file, "logo.jpg");
+    return request<import("./types").Debt>(`/api/debts/${id}/logo`, { method: "POST", body });
+  },
+  deleteDebtLogo: (id: string) => request(`/api/debts/${id}/logo`, { method: "DELETE" }),
+  debtLogo: async (id: string) => {
+    let res: Response;
+    try {
+      res = await fetch(`/api/debts/${id}/logo`, { credentials: "include", headers: headers() });
+    } catch {
+      throw new Error("network");
+    }
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error("server");
+    return res.blob();
+  },
   telegram: () => request<import("./types").TelegramStatus>("/api/telegram"),
   telegramTest: () => request("/api/telegram/test", { method: "POST" }),
   rates: () => request<import("./rates").Rates>("/api/rates"),

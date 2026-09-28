@@ -82,6 +82,9 @@ func New(s *store.Store, bot TelegramSender) http.Handler {
 		r.Put("/api/debts/{id}", api.updateDebt)
 		r.Delete("/api/debts/{id}", api.deleteDebt)
 		r.Post("/api/debts/{id}/pay", api.payDebt)
+		r.Post("/api/debts/{id}/logo", api.uploadDebtLogo)
+		r.Get("/api/debts/{id}/logo", api.getDebtLogo)
+		r.Delete("/api/debts/{id}/logo", api.deleteDebtLogo)
 		r.Post("/api/debts/{id}/installments/{instId}/pay", api.payInstallment)
 		r.Delete("/api/debts/{id}/installments/{instId}/prior", api.undoPriorInstallment)
 

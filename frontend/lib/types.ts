@@ -80,6 +80,8 @@ export type Installment = {
   debt_id: string;
   debt_name?: string;
   creditor?: string;
+  color?: string;
+  has_logo?: boolean;
   amount: number;
   due_date: string;
   paid_at?: string | null;
@@ -99,6 +101,7 @@ export type Debt = {
   net_received?: number;
   notes: string;
   color: string;
+  has_logo?: boolean;
   has_schedule: boolean;
   start_date?: string | null;
   end_date?: string | null;

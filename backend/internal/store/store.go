@@ -822,10 +822,12 @@ FROM debts d WHERE status='active'`).Scan(&d.DebtsRemaining)
 
 	_ = s.db.QueryRowContext(ctx, `
 SELECT COALESCE(SUM(amount),0) FROM transactions
-WHERE type='income' AND account_id IS NOT NULL AND occurred_at >= date_trunc('month', NOW())`).Scan(&d.MonthlyIncome)
+WHERE type='income' AND account_id IS NOT NULL
+  AND (occurred_at AT TIME ZONE 'Asia/Tehran') >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Tehran')`).Scan(&d.MonthlyIncome)
 	_ = s.db.QueryRowContext(ctx, `
 SELECT COALESCE(SUM(amount),0) FROM transactions
-WHERE type IN ('expense','contribution') AND account_id IS NOT NULL AND occurred_at >= date_trunc('month', NOW())`).Scan(&d.MonthlyExpense)
+WHERE type IN ('expense','contribution') AND account_id IS NOT NULL
+  AND (occurred_at AT TIME ZONE 'Asia/Tehran') >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Tehran')`).Scan(&d.MonthlyExpense)
 
 	accounts, err := s.ListAccounts(ctx)
 	if err != nil {
@@ -844,7 +846,7 @@ WHERE type IN ('expense','contribution') AND account_id IS NOT NULL AND occurred
 	d.Assets = assets
 	d.AssetsTotal = liveAssetsTotal(ctx, assets)
 	d.NetWorth = d.Liquid + d.AssetsTotal - d.DebtsRemaining
-	upcoming, err := s.UpcomingInstallments(ctx, 6)
+	upcoming, err := s.UpcomingInstallments(ctx, 120)
 	if err != nil {
 		return d, err
 	}
@@ -859,11 +861,11 @@ WHERE type IN ('expense','contribution') AND account_id IS NOT NULL AND occurred
 SELECT to_char(day, 'YYYY-MM-DD'),
        COALESCE(SUM(income),0), COALESCE(SUM(expense),0)
 FROM (
-  SELECT date_trunc('day', occurred_at) AS day,
+  SELECT (occurred_at AT TIME ZONE 'Asia/Tehran')::date AS day,
          CASE WHEN type='income' THEN amount ELSE 0 END AS income,
          CASE WHEN type IN ('expense','contribution') THEN amount ELSE 0 END AS expense
   FROM transactions
-  WHERE occurred_at >= NOW() - INTERVAL '30 days'
+  WHERE occurred_at >= (NOW() AT TIME ZONE 'Asia/Tehran')::date - INTERVAL '89 days'
     AND account_id IS NOT NULL
     AND type IN ('income','expense','contribution')
 ) q
@@ -881,11 +883,13 @@ GROUP BY day ORDER BY day`)
 		d.Cashflow = append(d.Cashflow, p)
 	}
 	rows.Close()
+	d.Cashflow = fillDailyPoints(d.Cashflow, 90)
 
 	crows, err := s.db.QueryContext(ctx, `
 SELECT COALESCE(NULLIF(category,''),'سایر'), COALESCE(SUM(amount),0)
 FROM transactions
-WHERE type IN ('expense','contribution') AND account_id IS NOT NULL AND occurred_at >= date_trunc('month', NOW())
+WHERE type IN ('expense','contribution') AND account_id IS NOT NULL
+  AND (occurred_at AT TIME ZONE 'Asia/Tehran') >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Tehran')
 GROUP BY 1 ORDER BY 2 DESC LIMIT 8`)
 	if err != nil {
 		return d, err
@@ -902,11 +906,11 @@ GROUP BY 1 ORDER BY 2 DESC LIMIT 8`)
 	crows.Close()
 
 	mrows, err := s.db.QueryContext(ctx, `
-SELECT to_char(date_trunc('month', occurred_at), 'YYYY-MM'),
+SELECT to_char(date_trunc('month', occurred_at AT TIME ZONE 'Asia/Tehran'), 'YYYY-MM'),
        COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0),
        COALESCE(SUM(CASE WHEN type IN ('expense','contribution') THEN amount ELSE 0 END),0)
 FROM transactions
-WHERE occurred_at >= date_trunc('month', NOW()) - INTERVAL '5 months'
+WHERE (occurred_at AT TIME ZONE 'Asia/Tehran') >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Tehran') - INTERVAL '11 months'
   AND account_id IS NOT NULL
   AND type IN ('income','expense','contribution')
 GROUP BY 1 ORDER BY 1`)
@@ -923,7 +927,55 @@ GROUP BY 1 ORDER BY 1`)
 		d.Monthly = append(d.Monthly, p)
 	}
 	mrows.Close()
+	d.Monthly = fillMonthlyPoints(d.Monthly, 12)
 	return d, nil
+}
+
+func fillDailyPoints(in []models.DailyPoint, days int) []models.DailyPoint {
+	by := map[string]models.DailyPoint{}
+	for _, p := range in {
+		key := p.Date
+		if len(key) > 10 {
+			key = key[:10]
+		}
+		by[key] = p
+	}
+	loc := tehran()
+	today := time.Now().In(loc)
+	start := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -(days - 1))
+	out := make([]models.DailyPoint, 0, days)
+	for i := 0; i < days; i++ {
+		key := start.AddDate(0, 0, i).Format("2006-01-02")
+		if p, ok := by[key]; ok {
+			p.Date = key
+			out = append(out, p)
+			continue
+		}
+		out = append(out, models.DailyPoint{Date: key})
+	}
+	return out
+}
+
+func fillMonthlyPoints(in []models.MonthlyPoint, months int) []models.MonthlyPoint {
+	by := map[string]models.MonthlyPoint{}
+	for _, p := range in {
+		by[p.Month] = p
+	}
+	loc := tehran()
+	now := time.Now().In(loc)
+	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc).AddDate(0, -(months - 1), 0)
+	out := make([]models.MonthlyPoint, 0, months)
+	for i := 0; i < months; i++ {
+		t := first.AddDate(0, i, 0)
+		key := t.Format("2006-01")
+		if p, ok := by[key]; ok {
+			p.Month = key
+			out = append(out, p)
+			continue
+		}
+		out = append(out, models.MonthlyPoint{Month: key})
+	}
+	return out
 }
 
 func liveAssetsTotal(ctx context.Context, assets []models.Asset) int64 {

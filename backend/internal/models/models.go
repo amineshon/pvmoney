@@ -210,6 +210,7 @@ type Debt struct {
 	NetReceived       int64         `json:"net_received"`
 	Notes             string        `json:"notes"`
 	Color         string        `json:"color"`
+	HasLogo       bool          `json:"has_logo"`
 	HasSchedule   bool          `json:"has_schedule"`
 	StartDate     *time.Time    `json:"start_date,omitempty"`
 	EndDate       *time.Time    `json:"end_date,omitempty"`
@@ -227,6 +228,8 @@ type Installment struct {
 	DebtID    string     `json:"debt_id"`
 	DebtName  string     `json:"debt_name,omitempty"`
 	Creditor  string     `json:"creditor,omitempty"`
+	Color     string     `json:"color,omitempty"`
+	HasLogo   bool       `json:"has_logo"`
 	Amount    int64      `json:"amount"`
 	DueDate   time.Time  `json:"due_date"`
 	PaidAt    *time.Time `json:"paid_at,omitempty"`

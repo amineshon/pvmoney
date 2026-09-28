@@ -26,6 +26,7 @@ func (s *Store) ListDebts(ctx context.Context) ([]models.Debt, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT d.id, d.name, d.type, d.creditor, d.total_amount, d.remaining, d.commission_amount, d.notes, d.color,
        d.has_schedule, d.start_date, d.end_date, d.monthly_amount, d.due_day, d.status, d.created_at, d.updated_at,
+       (d.logo IS NOT NULL AND octet_length(d.logo) > 0),
        (SELECT MIN(due_date) FROM debt_installments i WHERE i.debt_id=d.id AND i.status='pending')
 FROM debts d ORDER BY d.created_at DESC`)
 	if err != nil {
@@ -47,6 +48,7 @@ func (s *Store) GetDebt(ctx context.Context, id string) (models.Debt, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT d.id, d.name, d.type, d.creditor, d.total_amount, d.remaining, d.commission_amount, d.notes, d.color,
        d.has_schedule, d.start_date, d.end_date, d.monthly_amount, d.due_day, d.status, d.created_at, d.updated_at,
+       (d.logo IS NOT NULL AND octet_length(d.logo) > 0),
        (SELECT MIN(due_date) FROM debt_installments i WHERE i.debt_id=d.id AND i.status='pending')
 FROM debts d WHERE d.id=$1`, id)
 	d, err := scanDebt(row, true)
@@ -342,6 +344,57 @@ func (s *Store) DeleteDebt(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *Store) SetDebtLogo(ctx context.Context, id, mime string, data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("%w: empty logo", ErrInvalid)
+	}
+	if mime == "" {
+		mime = "image/jpeg"
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE debts SET logo=$2, logo_mime=$3, updated_at=NOW() WHERE id=$1`, id, data, mime)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DebtLogo(ctx context.Context, id string) (string, []byte, error) {
+	var mime sql.NullString
+	var data []byte
+	err := s.db.QueryRowContext(ctx, `SELECT logo_mime, logo FROM debts WHERE id=$1`, id).Scan(&mime, &data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, ErrNotFound
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	if len(data) == 0 {
+		return "", nil, ErrNotFound
+	}
+	out := mime.String
+	if out == "" {
+		out = "image/jpeg"
+	}
+	return out, data, nil
+}
+
+func (s *Store) ClearDebtLogo(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE debts SET logo=NULL, logo_mime='', updated_at=NOW() WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) PayInstallment(ctx context.Context, debtID, instID string, in models.PayInput) (models.Debt, error) {
 	if in.Amount <= 0 {
 		return models.Debt{}, fmt.Errorf("%w: amount must be positive", ErrInvalid)
@@ -503,10 +556,12 @@ VALUES ($1,$2,'expense',$3,'debt',$4,NOW(),NOW())`, uuid.NewString(), in.Account
 
 func (s *Store) UpcomingInstallments(ctx context.Context, limit int) ([]models.Installment, error) {
 	if limit <= 0 {
-		limit = 8
+		limit = 120
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT i.id, i.debt_id, d.name, d.creditor, i.amount, i.due_date, i.paid_at, i.status, i.account_id
+SELECT i.id, i.debt_id, d.name, d.creditor, d.color,
+       (d.logo IS NOT NULL AND octet_length(d.logo) > 0),
+       i.amount, i.due_date, i.paid_at, i.status, i.account_id
 FROM debt_installments i
 JOIN debts d ON d.id = i.debt_id
 WHERE i.status='pending'
@@ -533,7 +588,9 @@ LIMIT $1`, limit)
 
 func (s *Store) PendingReminders(ctx context.Context) ([]models.Installment, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT i.id, i.debt_id, d.name, d.creditor, i.amount, i.due_date, i.paid_at, i.status, i.account_id
+SELECT i.id, i.debt_id, d.name, d.creditor, d.color,
+       (d.logo IS NOT NULL AND octet_length(d.logo) > 0),
+       i.amount, i.due_date, i.paid_at, i.status, i.account_id
 FROM debt_installments i
 JOIN debts d ON d.id = i.debt_id
 WHERE i.status='pending' AND i.due_date <= CURRENT_DATE + INTERVAL '21 days'`)
@@ -565,7 +622,9 @@ func (s *Store) MarkReminder(ctx context.Context, instID, kind string) error {
 
 func (s *Store) listInstallments(ctx context.Context, debtID string) ([]models.Installment, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT i.id, i.debt_id, d.name, d.creditor, i.amount, i.due_date, i.paid_at, i.status, i.account_id
+SELECT i.id, i.debt_id, d.name, d.creditor, d.color,
+       (d.logo IS NOT NULL AND octet_length(d.logo) > 0),
+       i.amount, i.due_date, i.paid_at, i.status, i.account_id
 FROM debt_installments i JOIN debts d ON d.id=i.debt_id
 WHERE i.debt_id=$1 ORDER BY i.due_date`, debtID)
 	if err != nil {
@@ -708,10 +767,10 @@ func scanDebt(s scanner, withNext bool) (models.Debt, error) {
 	var err error
 	if withNext {
 		err = s.Scan(&d.ID, &d.Name, &d.Type, &d.Creditor, &d.TotalAmount, &d.Remaining, &d.CommissionAmount, &d.Notes, &d.Color,
-			&d.HasSchedule, &start, &end, &d.MonthlyAmount, &d.DueDay, &d.Status, &d.CreatedAt, &d.UpdatedAt, &next)
+			&d.HasSchedule, &start, &end, &d.MonthlyAmount, &d.DueDay, &d.Status, &d.CreatedAt, &d.UpdatedAt, &d.HasLogo, &next)
 	} else {
 		err = s.Scan(&d.ID, &d.Name, &d.Type, &d.Creditor, &d.TotalAmount, &d.Remaining, &d.CommissionAmount, &d.Notes, &d.Color,
-			&d.HasSchedule, &start, &end, &d.MonthlyAmount, &d.DueDay, &d.Status, &d.CreatedAt, &d.UpdatedAt)
+			&d.HasSchedule, &start, &end, &d.MonthlyAmount, &d.DueDay, &d.Status, &d.CreatedAt, &d.UpdatedAt, &d.HasLogo)
 	}
 	if start.Valid {
 		t := start.Time
@@ -737,7 +796,7 @@ func scanInstallment(s scanner) (models.Installment, error) {
 	var it models.Installment
 	var paid pq.NullTime
 	var acc sql.NullString
-	err := s.Scan(&it.ID, &it.DebtID, &it.DebtName, &it.Creditor, &it.Amount, &it.DueDate, &paid, &it.Status, &acc)
+	err := s.Scan(&it.ID, &it.DebtID, &it.DebtName, &it.Creditor, &it.Color, &it.HasLogo, &it.Amount, &it.DueDate, &paid, &it.Status, &acc)
 	if paid.Valid {
 		t := paid.Time
 		it.PaidAt = &t
