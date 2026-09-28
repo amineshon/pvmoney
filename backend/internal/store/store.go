@@ -1058,11 +1058,15 @@ func parseDate(raw *string) (any, error) {
 	if raw == nil || strings.TrimSpace(*raw) == "" {
 		return nil, nil
 	}
-	t, err := time.Parse("2006-01-02", strings.TrimSpace(*raw))
+	s := strings.TrimSpace(*raw)
+	if len(s) > 10 {
+		s = s[:10]
+	}
+	t, err := time.ParseInLocation("2006-01-02", s, time.UTC)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid deadline", ErrInvalid)
 	}
-	return t, nil
+	return civilDate(t.Year(), int(t.Month()), t.Day()), nil
 }
 
 func nullString(s *string) any {

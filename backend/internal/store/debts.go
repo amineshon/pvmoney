@@ -115,10 +115,7 @@ func (s *Store) CreateDebt(ctx context.Context, in models.DebtInput) (models.Deb
 		if in.MonthlyAmount <= 0 {
 			in.MonthlyAmount = in.TotalAmount
 		}
-		dueDay := in.DueDay
-		if dueDay < 1 || dueDay > 31 {
-			dueDay = st.Day()
-		}
+		dueDay := jalaliDayOf(st)
 		in.DueDay = dueDay
 		var errPlan error
 		amounts, dates, errPlan = planInstallments(in.TotalAmount, in.MonthlyAmount, st, dueDay, in.Count)
@@ -266,10 +263,7 @@ WHERE debt_id=$1 AND NOT (status='paid' AND account_id IS NOT NULL)`, id); err !
 		if in.MonthlyAmount <= 0 {
 			in.MonthlyAmount = left
 		}
-		dueDay := in.DueDay
-		if dueDay < 1 || dueDay > 31 {
-			dueDay = st.Day()
-		}
+		dueDay := jalaliDayOf(st)
 		in.DueDay = dueDay
 		amounts, dates, errPlan := planInstallments(left, in.MonthlyAmount, st, dueDay, in.Count)
 		if errPlan != nil {
@@ -647,19 +641,23 @@ WHERE i.debt_id=$1 ORDER BY i.due_date`, debtID)
 }
 
 func generateDueDates(start, end time.Time, dueDay int) []time.Time {
-	loc := tehran()
-	start = start.In(loc)
-	end = end.In(loc)
-	y, m, _ := start.Date()
-	cur := clampDate(y, m, dueDay, loc)
-	if cur.Before(time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc)) {
-		cur = nextMonth(cur, dueDay)
+	cur := addJalaliMonths(start, 0)
+	y, m, d := dateYMD(cur)
+	jy, jm, jd := gregorianToJalali(y, m, d)
+	if dueDay >= 1 && dueDay <= 31 {
+		jd = dueDay
 	}
-	endDay := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, loc)
+	last := jalaliMonthLen(jy, jm)
+	if jd > last {
+		jd = last
+	}
+	gy, gm, gd := jalaliToGregorian(jy, jm, jd)
+	cur = civilDate(gy, gm, gd)
+	endDay := addJalaliMonths(end, 0)
 	out := make([]time.Time, 0)
 	for !cur.After(endDay) {
 		out = append(out, cur)
-		cur = nextMonth(cur, dueDay)
+		cur = addJalaliMonths(cur, 1)
 		if len(out) > 360 {
 			break
 		}
@@ -715,19 +713,20 @@ func splitAmounts(total, monthly int64, count int) ([]int64, error) {
 }
 
 func datesFromFirst(first time.Time, dueDay, count int) []time.Time {
-	loc := tehran()
-	first = first.In(loc)
-	if dueDay < 1 || dueDay > 31 {
-		dueDay = first.Day()
+	y, m, d := dateYMD(first)
+	jy, jm, jd := gregorianToJalali(y, m, d)
+	if dueDay >= 1 && dueDay <= 31 {
+		jd = dueDay
 	}
-	cur := clampDate(first.Year(), first.Month(), dueDay, loc)
-	if cur.Before(time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, loc)) {
-		cur = nextMonth(cur, dueDay)
+	last := jalaliMonthLen(jy, jm)
+	if jd > last {
+		jd = last
 	}
+	gy, gm, gd := jalaliToGregorian(jy, jm, jd)
+	cur := civilDate(gy, gm, gd)
 	out := make([]time.Time, 0, count)
 	for i := 0; i < count; i++ {
-		out = append(out, cur)
-		cur = nextMonth(cur, dueDay)
+		out = append(out, addJalaliMonths(cur, i))
 	}
 	return out
 }

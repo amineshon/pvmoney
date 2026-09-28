@@ -1,3 +1,11 @@
+import {
+  daysInMonth,
+  parseISODate,
+  partsToISO,
+  shiftMonth,
+  toJalali,
+} from "./calendar";
+
 export type PlannedInstallment = {
   index: number;
   due: string;
@@ -12,13 +20,12 @@ export function todayISO() {
 }
 
 export function addMonths(iso: string, n: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  if (!y || !m || !d) return iso;
-  const base = Date.UTC(y, m - 1 + n, 1);
-  const dt = new Date(base);
-  const last = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0)).getUTCDate();
-  dt.setUTCDate(Math.min(d, last));
-  return dt.toISOString().slice(0, 10);
+  const g = parseISODate(iso);
+  if (!g) return iso;
+  const j = toJalali(g.y, g.m, g.d);
+  const next = shiftMonth(j.y, j.m, n, "jalali");
+  const d = Math.min(j.d, daysInMonth(next.y, next.m, "jalali"));
+  return partsToISO({ y: next.y, m: next.m, d }, "jalali");
 }
 
 export function autoInstallmentCount(total: number, monthly: number) {

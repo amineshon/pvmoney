@@ -14,6 +14,7 @@ import { apiError, useI18n } from "@/lib/i18n";
 import { faDate, formatMoney, toman } from "@/lib/format";
 import { isMarketAsset, liveUnitPrice, type Rates } from "@/lib/rates";
 import { addMonths, autoInstallmentCount, planInstallments, todayISO } from "@/lib/installments";
+import { parseISODate, toJalali } from "@/lib/calendar";
 
 export function AccountForm({
   initial,
@@ -882,7 +883,7 @@ export function DebtForm({
     [hasSchedule, left, monthly, start, usedCount],
   );
   const last = plan[plan.length - 1];
-  const dueDay = start ? Number(start.slice(8, 10)) || 1 : 1;
+  const dueDay = jalaliDueDay(start);
   const end = last?.due || start || null;
   const netGet = Math.max(0, total - commission);
   const allIn = total + commission;
@@ -1198,6 +1199,12 @@ function firstDueDefault(initial?: Debt) {
   const paid = (initial.installments || []).filter((it) => it.status === "paid");
   if (paid.length) return addMonths(paid[paid.length - 1].due_date.slice(0, 10), 1);
   return initial.start_date ? initial.start_date.slice(0, 10) : todayISO();
+}
+
+function jalaliDueDay(iso: string) {
+  const g = parseISODate(iso);
+  if (!g) return 1;
+  return toJalali(g.y, g.m, g.d).d;
 }
 
 export function PayDebtForm({
