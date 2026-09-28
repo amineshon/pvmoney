@@ -846,7 +846,7 @@ WHERE type IN ('expense','contribution') AND account_id IS NOT NULL
 	d.Assets = assets
 	d.AssetsTotal = liveAssetsTotal(ctx, assets)
 	d.NetWorth = d.Liquid + d.AssetsTotal - d.DebtsRemaining
-	upcoming, err := s.UpcomingInstallments(ctx, 120)
+	upcoming, err := s.DashboardInstallments(ctx)
 	if err != nil {
 		return d, err
 	}

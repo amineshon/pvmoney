@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 func div(a, b int) int { return a / b }
 
@@ -121,4 +124,19 @@ func addJalaliMonths(t time.Time, n int) time.Time {
 	}
 	gy, gm, gd := jalaliToGregorian(ny, nm, jd)
 	return civilDate(gy, gm, gd)
+}
+
+func jalaliMonthRange(now time.Time) (start, end string) {
+	y, m, d := now.In(tehran()).Date()
+	jy, jm, _ := gregorianToJalali(y, int(m), d)
+	sy, sm, sd := jalaliToGregorian(jy, jm, 1)
+	var ey, em, ed int
+	if jm == 12 {
+		ey, em, ed = jalaliToGregorian(jy+1, 1, 1)
+	} else {
+		ey, em, ed = jalaliToGregorian(jy, jm+1, 1)
+	}
+	start = fmt.Sprintf("%04d-%02d-%02d", sy, sm, sd)
+	end = fmt.Sprintf("%04d-%02d-%02d", ey, em, ed)
+	return
 }

@@ -572,7 +572,38 @@ LIMIT $1`, limit)
 		if err != nil {
 			return nil, err
 		}
-		if it.Status == "pending" && it.DueDate.Format("2006-01-02") < today {
+		if it.Status == "pending" && models.DateOnly(it.DueDate) < today {
+			it.Status = "overdue"
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DashboardInstallments(ctx context.Context) ([]models.Installment, error) {
+	start, end := jalaliMonthRange(time.Now())
+	rows, err := s.db.QueryContext(ctx, `
+SELECT i.id, i.debt_id, d.name, d.creditor, d.color,
+       (d.logo IS NOT NULL AND octet_length(d.logo) > 0),
+       i.amount, i.due_date, i.paid_at, i.status, i.account_id
+FROM debt_installments i
+JOIN debts d ON d.id = i.debt_id
+WHERE i.status = 'pending'
+   OR (i.due_date >= $1::date AND i.due_date < $2::date)
+ORDER BY CASE WHEN i.status = 'pending' THEN 0 ELSE 1 END, i.due_date ASC
+LIMIT 200`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]models.Installment, 0)
+	today := time.Now().In(tehran()).Format("2006-01-02")
+	for rows.Next() {
+		it, err := scanInstallment(rows)
+		if err != nil {
+			return nil, err
+		}
+		if it.Status == "pending" && models.DateOnly(it.DueDate) < today {
 			it.Status = "overdue"
 		}
 		out = append(out, it)
@@ -632,7 +663,7 @@ WHERE i.debt_id=$1 ORDER BY i.due_date`, debtID)
 		if err != nil {
 			return nil, err
 		}
-		if it.Status == "pending" && it.DueDate.Format("2006-01-02") < today {
+		if it.Status == "pending" && models.DateOnly(it.DueDate) < today {
 			it.Status = "overdue"
 		}
 		out = append(out, it)

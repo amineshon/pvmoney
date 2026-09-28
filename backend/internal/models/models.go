@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 // MaxMoney is 10 trillion Toman — keeps JSON/int64 and UI math in a sane range.
 const MaxMoney int64 = 10_000_000_000_000
@@ -235,6 +239,40 @@ type Installment struct {
 	PaidAt    *time.Time `json:"paid_at,omitempty"`
 	Status    string     `json:"status"`
 	AccountID *string    `json:"account_id,omitempty"`
+}
+
+func (it Installment) MarshalJSON() ([]byte, error) {
+	type out struct {
+		ID        string  `json:"id"`
+		DebtID    string  `json:"debt_id"`
+		DebtName  string  `json:"debt_name,omitempty"`
+		Creditor  string  `json:"creditor,omitempty"`
+		Color     string  `json:"color,omitempty"`
+		HasLogo   bool    `json:"has_logo"`
+		Amount    int64   `json:"amount"`
+		DueDate   string  `json:"due_date"`
+		PaidAt    *string `json:"paid_at,omitempty"`
+		Status    string  `json:"status"`
+		AccountID *string `json:"account_id,omitempty"`
+	}
+	o := out{
+		ID: it.ID, DebtID: it.DebtID, DebtName: it.DebtName, Creditor: it.Creditor,
+		Color: it.Color, HasLogo: it.HasLogo, Amount: it.Amount, Status: it.Status,
+		AccountID: it.AccountID, DueDate: DateOnly(it.DueDate),
+	}
+	if it.PaidAt != nil && !it.PaidAt.IsZero() {
+		s := it.PaidAt.UTC().Format(time.RFC3339)
+		o.PaidAt = &s
+	}
+	return json.Marshal(o)
+}
+
+func DateOnly(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	y, m, d := t.UTC().Date()
+	return fmt.Sprintf("%04d-%02d-%02d", y, int(m), d)
 }
 
 type DebtInput struct {

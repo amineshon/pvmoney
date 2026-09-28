@@ -77,6 +77,13 @@ func TestInstallmentClampsJalaliMonthEnd(t *testing.T) {
 	}
 }
 
+func TestJalaliMonthRangeMehr1405(t *testing.T) {
+	start, end := jalaliMonthRange(time.Date(2026, 9, 28, 12, 0, 0, 0, tehran()))
+	if start != "2026-09-23" || end != "2026-10-23" {
+		t.Fatalf("range %s .. %s", start, end)
+	}
+}
+
 func TestParseDateDoesNotShiftDay(t *testing.T) {
 	s := "2025-11-18"
 	v, err := parseDate(&s)
