@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { Installment } from "@/lib/types";
 import { faDate, toman } from "@/lib/format";
-import { calendarKind, formatCalNum, gregorianToParts, monthName, todayParts } from "@/lib/calendar";
+import { calendarKind, formatCalNum, gregorianToParts, monthName, todayParts, type CalendarKind } from "@/lib/calendar";
 import { DebtLogo } from "./DebtLogo";
 import { Modal } from "./ui";
 import { useI18n } from "@/lib/i18n";
@@ -17,6 +17,37 @@ function pad(n: number) {
 function dueYMD(raw: string) {
   const m = /(\d{4}-\d{2}-\d{2})/.exec(raw || "");
   return m ? m[1] : "";
+}
+
+function rankInst(it: Installment) {
+  if (it.status === "paid" && it.account_id) return 2;
+  if (it.status === "paid") return 1;
+  return 0;
+}
+
+function onePerDebt(items: Installment[]) {
+  const map = new Map<string, Installment>();
+  for (const it of items) {
+    const prev = map.get(it.debt_id);
+    if (!prev || rankInst(it) > rankInst(prev) || (rankInst(it) === rankInst(prev) && dueYMD(it.due_date) < dueYMD(prev.due_date))) {
+      map.set(it.debt_id, it);
+    }
+  }
+  return [...map.values()];
+}
+
+function onePerDebtMonth(items: Installment[], kind: CalendarKind) {
+  const map = new Map<string, Installment>();
+  for (const it of items) {
+    const iso = dueYMD(it.due_date);
+    const parts = gregorianToParts(iso, kind);
+    const key = `${it.debt_id}-${parts?.y ?? 0}-${pad(parts?.m ?? 0)}`;
+    const prev = map.get(key);
+    if (!prev || rankInst(it) > rankInst(prev) || (rankInst(it) === rankInst(prev) && iso < dueYMD(prev.due_date))) {
+      map.set(key, it);
+    }
+  }
+  return [...map.values()];
 }
 
 export function DueBoard({
@@ -61,20 +92,36 @@ export function DueBoard({
       laterMap.set(key, bucket);
     }
     const later = [...laterMap.values()].sort((a, b) => a.y - b.y || a.m - b.m);
-    thisMonth.sort((a, b) => dueYMD(a.due_date).localeCompare(dueYMD(b.due_date)));
-    overdue.sort((a, b) => dueYMD(a.due_date).localeCompare(dueYMD(b.due_date)));
-    return { overdue, thisMonth, later };
+    for (const bucket of later) {
+      bucket.items = onePerDebt(bucket.items);
+      bucket.total = bucket.items.reduce((s, it) => s + it.amount, 0);
+    }
+    const thisMonthOnce = onePerDebt(thisMonth);
+    thisMonthOnce.sort((a, b) => {
+      const pa = a.status === "paid" ? 1 : 0;
+      const pb = b.status === "paid" ? 1 : 0;
+      if (pa !== pb) return pa - pb;
+      return dueYMD(a.due_date).localeCompare(dueYMD(b.due_date));
+    });
+    const overdueOnce = onePerDebtMonth(overdue, kind);
+    overdueOnce.sort((a, b) => dueYMD(a.due_date).localeCompare(dueYMD(b.due_date)));
+    return { overdue: overdueOnce, thisMonth: thisMonthOnce, later };
   }, [items, kind, todayISO, todayKey]);
 
-  const monthItems = [...overdue, ...thisMonth];
-  const paidMonthItems = thisMonth.filter((it) => it.status === "paid");
-  const primary = monthItems.length > 0
-    ? { title: t("dash.dueThisMonth"), items: monthItems, y: today.y, m: today.m }
+  const openItems = [...overdue, ...thisMonth.filter((it) => it.status !== "paid")];
+  const paidItems = thisMonth.filter((it) => it.status === "paid");
+  const hasThisMonth = openItems.length > 0 || paidItems.length > 0;
+  const [picked, setPicked] = useState<"open" | "paid" | null>(null);
+  const activeTab = picked ?? (openItems.length > 0 ? "open" : "paid");
+  const shown = activeTab === "paid" ? paidItems : openItems;
+
+  const primary = hasThisMonth
+    ? { title: t("dash.dueThisMonth"), items: shown, y: today.y, m: today.m }
     : later[0]
       ? { title: `${monthName(later[0].m, locale)} ${formatCalNum(later[0].y, locale)}`, items: later[0].items, y: later[0].y, m: later[0].m }
       : null;
-  const restLater = monthItems.length > 0 ? later : later.slice(1);
-  const monthTotal = (primary?.items || []).filter((it) => it.status !== "paid").reduce((s, it) => s + it.amount, 0);
+  const restLater = hasThisMonth ? later : later.slice(1);
+  const monthTotal = openItems.reduce((s, it) => s + it.amount, 0);
   const [openMonth, setOpenMonth] = useState<(typeof later)[0] | null>(null);
 
   return (
@@ -89,9 +136,9 @@ export function DueBoard({
           <div>
             <h3 className="font-bold">{primary ? primary.title : t("dash.dueThisMonth")}</h3>
             <p className="mt-1 text-xs text-white/40">
-              {t("dash.dueThisMonthCount", { n: monthItems.length || primary?.items.length || 0 })}
+              {t("dash.dueThisMonthCount", { n: openItems.length || primary?.items.length || 0 })}
               {overdue.length > 0 ? ` · ${t("dash.overdueN", { n: overdue.length })}` : ""}
-              {paidMonthItems.length > 0 ? ` · ${t("dash.monthPaid", { n: paidMonthItems.length })}` : ""}
+              {paidItems.length > 0 ? ` · ${t("dash.monthPaid", { n: paidItems.length })}` : ""}
             </p>
           </div>
           <div className="text-end">
@@ -100,8 +147,29 @@ export function DueBoard({
           </div>
         </div>
 
+        {hasThisMonth && (
+          <div className="mt-4 flex rounded-2xl bg-white/5 p-1">
+            <TabBtn
+              active={activeTab === "open"}
+              onClick={() => setPicked("open")}
+              count={openItems.length}
+              label={t("debts.tabPending")}
+            />
+            <TabBtn
+              active={activeTab === "paid"}
+              onClick={() => setPicked("paid")}
+              count={paidItems.length}
+              label={t("debts.tabPaid")}
+            />
+          </div>
+        )}
+
         {!primary ? (
           <p className="mt-4 text-sm text-white/40">{t("dash.noThisMonth")}</p>
+        ) : shown.length === 0 && hasThisMonth ? (
+          <p className="mt-4 text-sm text-white/40">
+            {activeTab === "paid" ? t("dash.noPaidThisMonth") : t("dash.noThisMonth")}
+          </p>
         ) : (
           <div className="mt-4 space-y-2">
             {primary.items.map((it) => (
@@ -153,6 +221,31 @@ export function DueBoard({
         </Modal>
       )}
     </div>
+  );
+}
+
+function TabBtn({
+  active,
+  onClick,
+  count,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  count: number;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold transition ${
+        active ? "bg-white/12 text-white" : "text-white/45 hover:text-white/70"
+      }`}
+    >
+      {label}
+      <span className={`rounded-full px-1.5 py-0.5 text-[11px] ${active ? "bg-white/15" : "bg-white/8"}`}>{count}</span>
+    </button>
   );
 }
 

@@ -138,35 +138,10 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'active')`,
 	if err != nil {
 		return models.Debt{}, err
 	}
-	prepaid := in.AlreadyPaidCount
-	if prepaid < 0 {
-		prepaid = 0
+	if _, err := insertScheduleRows(ctx, tx, id, amounts, dates, in.AlreadyPaidCount); err != nil {
+		return models.Debt{}, err
 	}
-	if prepaid > len(amounts) {
-		prepaid = len(amounts)
-	}
-	remaining = 0
-	for i, dt := range dates {
-		status := "pending"
-		var paidAt any
-		if i < prepaid {
-			status = "paid"
-			paidAt = dt
-		} else {
-			remaining += amounts[i]
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO debt_installments (id, debt_id, amount, due_date, status, paid_at) VALUES ($1,$2,$3,$4,$5,$6)`,
-			uuid.NewString(), id, amounts[i], dt, status, paidAt); err != nil {
-			return models.Debt{}, err
-		}
-	}
-	status := "active"
-	if remaining <= 0 {
-		status = "paid"
-		remaining = 0
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE debts SET remaining=$2, status=$3 WHERE id=$1`, id, remaining, status); err != nil {
+	if err := refreshDebtRemaining(ctx, tx, id); err != nil {
 		return models.Debt{}, err
 	}
 	if acc := strings.TrimSpace(deref(in.CommissionAccountID)); acc != "" && in.CommissionAmount > 0 {
@@ -233,30 +208,42 @@ func (s *Store) UpdateDebt(ctx context.Context, id string, in models.DebtInput) 
 		return models.Debt{}, err
 	}
 
-	var accountPaid int64
+	today := tehranTodayISO()
+	var keptPaid int64
+	var lastKept sql.NullTime
 	if err := tx.QueryRowContext(ctx, `
-SELECT COALESCE(SUM(amount),0) FROM debt_installments
-WHERE debt_id=$1 AND status='paid' AND account_id IS NOT NULL`, id).Scan(&accountPaid); err != nil {
+SELECT COALESCE(SUM(amount),0), MAX(CASE WHEN due_date <= $2::date THEN due_date END)
+FROM debt_installments
+WHERE debt_id=$1 AND status='paid' AND (account_id IS NOT NULL OR due_date <= $2::date)`,
+		id, today).Scan(&keptPaid, &lastKept); err != nil {
 		return models.Debt{}, err
 	}
-	if in.TotalAmount < accountPaid {
+	if in.TotalAmount < keptPaid {
 		return models.Debt{}, fmt.Errorf("%w: total is less than already paid", ErrInvalid)
 	}
 
 	if _, err := tx.ExecContext(ctx, `
 DELETE FROM debt_installments
-WHERE debt_id=$1 AND NOT (status='paid' AND account_id IS NOT NULL)`, id); err != nil {
+WHERE debt_id=$1 AND NOT (
+  status='paid' AND (account_id IS NOT NULL OR due_date <= $2::date)
+)`, id, today); err != nil {
 		return models.Debt{}, err
 	}
 
-	left := in.TotalAmount - accountPaid
-	remaining := left
+	left := in.TotalAmount - keptPaid
 	if in.Type == "" {
 		in.Type = "loan"
 	}
 
 	if in.HasSchedule && left > 0 {
 		st, ok := start.(time.Time)
+		if lastKept.Valid {
+			nxt := addJalaliMonths(lastKept.Time, 1)
+			if !ok || models.DateOnly(st) < models.DateOnly(nxt) {
+				st = nxt
+				ok = true
+			}
+		}
 		if !ok {
 			return models.Debt{}, fmt.Errorf("%w: first due date required", ErrInvalid)
 		}
@@ -264,61 +251,68 @@ WHERE debt_id=$1 AND NOT (status='paid' AND account_id IS NOT NULL)`, id); err !
 			in.MonthlyAmount = left
 		}
 		dueDay := jalaliDayOf(st)
+		if formStart, okStart := start.(time.Time); okStart {
+			dueDay = jalaliDayOf(formStart)
+		}
 		in.DueDay = dueDay
 		amounts, dates, errPlan := planInstallments(left, in.MonthlyAmount, st, dueDay, in.Count)
 		if errPlan != nil {
 			return models.Debt{}, errPlan
 		}
 		end = dates[len(dates)-1]
-		prepaid := in.AlreadyPaidCount
-		if prepaid < 0 {
-			prepaid = 0
+		exist := map[string]bool{}
+		existMonth := map[string]bool{}
+		rows, errDates := tx.QueryContext(ctx, `SELECT due_date FROM debt_installments WHERE debt_id=$1`, id)
+		if errDates != nil {
+			return models.Debt{}, errDates
 		}
-		if prepaid > len(amounts) {
-			prepaid = len(amounts)
-		}
-		remaining = 0
-		for i, dt := range dates {
-			status := "pending"
-			var paidAt any
-			if i < prepaid {
-				status = "paid"
-				paidAt = dt
-			} else {
-				remaining += amounts[i]
-			}
-			if _, err := tx.ExecContext(ctx, `
-INSERT INTO debt_installments (id, debt_id, amount, due_date, status, paid_at) VALUES ($1,$2,$3,$4,$5,$6)`,
-				uuid.NewString(), id, amounts[i], dt, status, paidAt); err != nil {
+		for rows.Next() {
+			var dt time.Time
+			if err := rows.Scan(&dt); err != nil {
+				rows.Close()
 				return models.Debt{}, err
 			}
+			exist[models.DateOnly(dt)] = true
+			existMonth[jalaliMonthKey(dt)] = true
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return models.Debt{}, err
+		}
+		var nextAmounts []int64
+		var nextDates []time.Time
+		for i, dt := range dates {
+			if exist[models.DateOnly(dt)] || existMonth[jalaliMonthKey(dt)] {
+				continue
+			}
+			exist[models.DateOnly(dt)] = true
+			existMonth[jalaliMonthKey(dt)] = true
+			nextAmounts = append(nextAmounts, amounts[i])
+			nextDates = append(nextDates, dt)
+		}
+		if _, err := insertScheduleRows(ctx, tx, id, nextAmounts, nextDates, in.AlreadyPaidCount); err != nil {
+			return models.Debt{}, err
 		}
 	} else if !in.HasSchedule {
 		end = start
-		if in.AlreadyPaidCount > 0 {
-			remaining = 0
-		}
-	}
-
-	status := "active"
-	if remaining <= 0 {
-		status = "paid"
-		remaining = 0
 	}
 
 	res, err := tx.ExecContext(ctx, `
 UPDATE debts SET name=$2, type=$3, creditor=$4, notes=$5, color=$6, commission_amount=$7,
   total_amount=$8, remaining=$9, has_schedule=$10, start_date=$11, end_date=$12,
-  monthly_amount=$13, due_day=$14, status=$15, updated_at=NOW()
+  monthly_amount=$13, due_day=$14, updated_at=NOW()
 WHERE id=$1`,
 		id, strings.TrimSpace(in.Name), in.Type, in.Creditor, in.Notes, in.Color, in.CommissionAmount,
-		in.TotalAmount, remaining, in.HasSchedule, start, end, in.MonthlyAmount, in.DueDay, status)
+		in.TotalAmount, left, in.HasSchedule, start, end, in.MonthlyAmount, in.DueDay)
 	if err != nil {
 		return models.Debt{}, err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return models.Debt{}, ErrNotFound
+	}
+	if err := refreshDebtRemaining(ctx, tx, id); err != nil {
+		return models.Debt{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return models.Debt{}, err
@@ -411,15 +405,15 @@ func (s *Store) PayInstallment(ctx context.Context, debtID, instID string, in mo
 	if status == "paid" {
 		return models.Debt{}, fmt.Errorf("%w: already paid", ErrInvalid)
 	}
+	if err := rejectSameJalaliMonthPaid(ctx, tx, debtID, instID, due); err != nil {
+		return models.Debt{}, err
+	}
 	if in.AlreadyPaid {
 		if _, err := tx.ExecContext(ctx, `
 UPDATE debt_installments SET status='paid', paid_at=NOW(), account_id=NULL WHERE id=$1`, instID); err != nil {
 			return models.Debt{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `
-UPDATE debts SET remaining=GREATEST(remaining-$2,0),
-status = CASE WHEN remaining-$2 <= 0 THEN 'paid' ELSE 'active' END,
-updated_at=NOW() WHERE id=$1`, debtID, in.Amount); err != nil {
+		if err := refreshDebtRemaining(ctx, tx, debtID); err != nil {
 			return models.Debt{}, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -434,10 +428,7 @@ updated_at=NOW() WHERE id=$1`, debtID, in.Amount); err != nil {
 UPDATE debt_installments SET status='paid', paid_at=NOW(), account_id=$2 WHERE id=$1`, instID, in.AccountID); err != nil {
 		return models.Debt{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE debts SET remaining=GREATEST(remaining-$2,0),
-status = CASE WHEN remaining-$2 <= 0 THEN 'paid' ELSE 'active' END,
-updated_at=NOW() WHERE id=$1`, debtID, in.Amount); err != nil {
+	if err := refreshDebtRemaining(ctx, tx, debtID); err != nil {
 		return models.Debt{}, err
 	}
 	desc := in.Description
@@ -480,8 +471,7 @@ SELECT status, account_id, amount FROM debt_installments WHERE id=$1 AND debt_id
 UPDATE debt_installments SET status='pending', paid_at=NULL, account_id=NULL WHERE id=$1`, instID); err != nil {
 		return models.Debt{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE debts SET remaining=remaining+$2, status='active', updated_at=NOW() WHERE id=$1`, debtID, amount); err != nil {
+	if err := refreshDebtRemaining(ctx, tx, debtID); err != nil {
 		return models.Debt{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -588,10 +578,11 @@ SELECT i.id, i.debt_id, d.name, d.creditor, d.color,
        i.amount, i.due_date, i.paid_at, i.status, i.account_id
 FROM debt_installments i
 JOIN debts d ON d.id = i.debt_id
-WHERE i.status = 'pending'
-   OR (i.due_date >= $1::date AND i.due_date < $2::date)
-ORDER BY CASE WHEN i.status = 'pending' THEN 0 ELSE 1 END, i.due_date ASC
-LIMIT 200`, start, end)
+WHERE (i.due_date >= $1::date AND i.due_date < $2::date)
+   OR (i.status = 'pending' AND i.due_date < $1::date)
+   OR (i.status = 'pending' AND i.due_date >= $2::date AND i.due_date < ($2::date + INTERVAL '18 months'))
+ORDER BY i.due_date ASC, CASE WHEN i.status = 'paid' THEN 1 ELSE 0 END
+LIMIT 300`, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -735,6 +726,13 @@ func splitAmounts(total, monthly int64, count int) ([]int64, error) {
 	if last <= 0 {
 		return nil, fmt.Errorf("%w: last installment invalid", ErrInvalid)
 	}
+	if count >= 2 && last < 1000 {
+		count--
+		last = total - monthly*int64(count-1)
+		if last <= 0 {
+			return nil, fmt.Errorf("%w: last installment invalid", ErrInvalid)
+		}
+	}
 	out := make([]int64, count)
 	for i := 0; i < count-1; i++ {
 		out[i] = monthly
@@ -770,25 +768,87 @@ func sumAmounts(items []int64) int64 {
 	return n
 }
 
-func nextMonth(t time.Time, dueDay int) time.Time {
-	y, m, _ := t.Date()
-	m++
-	if m > 12 {
-		m = 1
-		y++
+func insertScheduleRows(ctx context.Context, tx *sql.Tx, debtID string, amounts []int64, dates []time.Time, prepaid int) (int64, error) {
+	if len(amounts) == 0 || len(dates) == 0 {
+		return 0, nil
 	}
-	return clampDate(y, m, dueDay, t.Location())
+	today := tehranTodayISO()
+	left := prepaid
+	if left < 0 {
+		left = 0
+	}
+	var remaining int64
+	for i, dt := range dates {
+		status := "pending"
+		var paidAt any
+		if priorMark(dt, today, &left) {
+			status = "paid"
+			paidAt = dt
+		} else {
+			remaining += amounts[i]
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO debt_installments (id, debt_id, amount, due_date, status, paid_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+			uuid.NewString(), debtID, amounts[i], dt, status, paidAt); err != nil {
+			return 0, err
+		}
+	}
+	return remaining, nil
 }
 
-func clampDate(y int, m time.Month, day int, loc *time.Location) time.Time {
-	if day < 1 {
-		day = 1
+func priorMark(due time.Time, todayISO string, left *int) bool {
+	if left == nil || *left <= 0 {
+		return false
 	}
-	last := time.Date(y, m+1, 0, 0, 0, 0, 0, loc).Day()
-	if day > last {
-		day = last
+	if models.DateOnly(due) > todayISO {
+		return false
 	}
-	return time.Date(y, m, day, 0, 0, 0, 0, loc)
+	*left--
+	return true
+}
+
+func rejectSameJalaliMonthPaid(ctx context.Context, tx *sql.Tx, debtID, instID string, due time.Time) error {
+	rows, err := tx.QueryContext(ctx, `
+SELECT id, due_date FROM debt_installments
+WHERE debt_id=$1 AND status='paid' AND id<>$2`, debtID, instID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	key := jalaliMonthKey(due)
+	for rows.Next() {
+		var id string
+		var dt time.Time
+		if err := rows.Scan(&id, &dt); err != nil {
+			return err
+		}
+		if jalaliMonthKey(dt) == key {
+			return fmt.Errorf("%w: this month is already paid", ErrInvalid)
+		}
+	}
+	return rows.Err()
+}
+
+func refreshDebtRemaining(ctx context.Context, tx *sql.Tx, debtID string) error {
+	_, err := tx.ExecContext(ctx, `
+UPDATE debts d SET
+  remaining = CASE
+    WHEN d.has_schedule THEN COALESCE((
+      SELECT SUM(i.amount) FROM debt_installments i WHERE i.debt_id = d.id AND i.status = 'pending'
+    ), 0)
+    ELSE GREATEST(d.remaining, 0)
+  END,
+  status = CASE
+    WHEN d.has_schedule AND COALESCE((
+      SELECT SUM(i.amount) FROM debt_installments i WHERE i.debt_id = d.id AND i.status = 'pending'
+    ), 0) <= 0 THEN 'paid'
+    WHEN d.has_schedule THEN 'active'
+    WHEN d.remaining <= 0 THEN 'paid'
+    ELSE 'active'
+  END,
+  updated_at = NOW()
+WHERE d.id = $1`, debtID)
+	return err
 }
 
 func scanDebt(s scanner, withNext bool) (models.Debt, error) {

@@ -833,8 +833,8 @@ export function DebtForm({
   onSaved: () => void;
 }) {
   const { t, label, locale } = useI18n();
-  const accountPaidItems = (initial?.installments || []).filter((it) => it.status === "paid" && it.account_id);
-  const accountPaidSum = accountPaidItems.reduce((s, it) => s + it.amount, 0);
+  const keptPaidItems = (initial?.installments || []).filter((it) => it.status === "paid");
+  const keptPaidSum = keptPaidItems.reduce((s, it) => s + it.amount, 0);
   const historicalCount = (initial?.installments || []).filter((it) => it.status === "paid" && !it.account_id).length;
   const pendingItems = (initial?.installments || []).filter((it) => it.status !== "paid");
 
@@ -859,7 +859,7 @@ export function DebtForm({
   const [logoPreview, setLogoPreview] = useState("");
   const [removeLogo, setRemoveLogo] = useState(false);
 
-  const left = Math.max(0, total - accountPaidSum);
+  const left = Math.max(0, total - keptPaidSum);
   const autoCount = autoInstallmentCount(left, monthly);
   const usedCount = countTouched ? count : autoCount || pendingItems.length;
 
@@ -882,6 +882,18 @@ export function DebtForm({
     () => (hasSchedule ? planInstallments(left, monthly, start, usedCount) : []),
     [hasSchedule, left, monthly, start, usedCount],
   );
+  const today = todayISO();
+  const priorFlags = useMemo(() => {
+    if (initial) return plan.map(() => false);
+    let leftPrepaid = prepaid;
+    return plan.map((it) => {
+      if (leftPrepaid > 0 && it.due <= today) {
+        leftPrepaid -= 1;
+        return true;
+      }
+      return false;
+    });
+  }, [initial, plan, prepaid, today]);
   const last = plan[plan.length - 1];
   const dueDay = jalaliDueDay(start);
   const end = last?.due || start || null;
@@ -906,7 +918,7 @@ export function DebtForm({
         monthly_amount: monthly,
         due_day: dueDay,
         count: plan.length,
-        already_paid_count: prepaid,
+        already_paid_count: initial ? 0 : prepaid,
         commission_amount: commission,
         commission_account_id: !initial && commission > 0 && commissionAccount ? commissionAccount : null,
       };
@@ -1002,9 +1014,9 @@ export function DebtForm({
           <MoneyInput value={total} onChange={setTotal} />
           <p className="mt-1.5 text-xs text-white/40">{t("form.debt.totalHint")}</p>
         </Field>
-        {accountPaidSum > 0 && (
+        {keptPaidSum > 0 && (
           <div className="mb-4 rounded-2xl border border-amber-400/20 bg-amber-400/8 px-4 py-3 text-sm text-amber-100/80">
-            {t("form.debt.paidKept", { n: accountPaidItems.length, a: toman(accountPaidSum, true, locale) })}
+            {t("form.debt.paidKept", { n: keptPaidItems.length, a: toman(keptPaidSum, true, locale) })}
           </div>
         )}
         <label className="mb-4 flex items-center gap-3 rounded-2xl bg-white/5 px-4 py-3 text-sm">
@@ -1063,6 +1075,7 @@ export function DebtForm({
                 </div>
               </Field>
             </div>
+            {!initial && (
             <Field label={t("form.debt.prepaid")}>
               <div className="flex items-center gap-2">
                 <button
@@ -1090,6 +1103,7 @@ export function DebtForm({
               </div>
               <p className="mt-1.5 text-xs text-white/40">{t("form.debt.prepaidHint")}</p>
             </Field>
+            )}
             {plan.length > 0 && (
               <div className="mb-4 overflow-hidden rounded-2xl border border-gold-400/20 bg-gold-400/8">
                 <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
@@ -1103,7 +1117,7 @@ export function DebtForm({
                 )}
                 <div className="max-h-52 divide-y divide-white/5 overflow-y-auto">
                   {plan.map((it, idx) => {
-                    const prior = idx < prepaid;
+                    const prior = priorFlags[idx];
                     return (
                     <div key={`${it.due}-${it.index}`} className={`flex items-center justify-between gap-3 px-4 py-2.5 text-sm ${prior ? "opacity-55" : ""}`}>
                       <div>

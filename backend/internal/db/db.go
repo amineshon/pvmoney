@@ -227,7 +227,10 @@ WHERE unit_value > 10000000000000 OR value > 10000000000000;
 	if err := repairOrphanedAccountHistory(database); err != nil {
 		return err
 	}
-	return rebuildLedgers(database)
+	if err := rebuildLedgers(database); err != nil {
+		return err
+	}
+	return repairFuturePriorPaid(database)
 }
 
 func rebuildLedgers(database *sql.DB) error {
@@ -369,6 +372,56 @@ DELETE FROM transactions
 WHERE (account_id IS NULL AND to_account_id IS NULL)
    OR (type = 'transfer' AND account_id IS NULL AND to_account_id IS NOT NULL)
    OR (type = 'transfer' AND to_account_id IS NULL AND account_id IS NOT NULL)`); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func repairFuturePriorPaid(database *sql.DB) error {
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`INSERT INTO app_settings (key, value) VALUES ('future_prior_repair_v1', '1') ON CONFLICT (key) DO NOTHING`)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil
+	}
+
+	if _, err := tx.Exec(`
+UPDATE debt_installments
+SET status = 'pending', paid_at = NULL
+WHERE status = 'paid'
+  AND account_id IS NULL
+  AND due_date > (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Tehran')::date
+`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+UPDATE debts d SET
+  remaining = CASE
+    WHEN has_schedule THEN COALESCE((
+      SELECT SUM(i.amount) FROM debt_installments i WHERE i.debt_id = d.id AND i.status = 'pending'
+    ), 0)
+    ELSE remaining
+  END,
+  status = CASE
+    WHEN has_schedule AND COALESCE((
+      SELECT SUM(i.amount) FROM debt_installments i WHERE i.debt_id = d.id AND i.status = 'pending'
+    ), 0) <= 0 THEN 'paid'
+    WHEN has_schedule THEN 'active'
+    ELSE status
+  END,
+  updated_at = NOW()
+WHERE has_schedule
+`); err != nil {
 		return err
 	}
 

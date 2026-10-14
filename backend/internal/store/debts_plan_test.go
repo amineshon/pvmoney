@@ -96,3 +96,99 @@ func TestParseDateDoesNotShiftDay(t *testing.T) {
 	}
 }
 
+func TestPriorMarkSkipsFutureDates(t *testing.T) {
+	today := "2026-09-28"
+	dates := []time.Time{
+		civilDate(2026, 8, 8),
+		civilDate(2026, 9, 8),
+		civilDate(2026, 10, 8),
+		civilDate(2026, 11, 8),
+	}
+	left := 12
+	paid := 0
+	for _, dt := range dates {
+		if priorMark(dt, today, &left) {
+			paid++
+		}
+	}
+	if paid != 2 {
+		t.Fatalf("marked paid=%d want 2 (only due on/before today)", paid)
+	}
+	if left != 10 {
+		t.Fatalf("unused prepaid left=%d want 10", left)
+	}
+}
+
+func TestSplitAmountsTinyLastMerges(t *testing.T) {
+	got, err := splitAmounts(169_309_596, 2_821_826, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) < 2 {
+		t.Fatalf("len=%d", len(got))
+	}
+	if got[len(got)-1] < 1000 {
+		t.Fatalf("tiny last remained: %v", got[len(got)-1])
+	}
+	var sum int64
+	for _, v := range got {
+		sum += v
+	}
+	if sum != 169_309_596 {
+		t.Fatalf("sum=%d", sum)
+	}
+}
+
+func TestGregorianTwentiethCollidesInEsfand(t *testing.T) {
+	feb := civilDate(2027, 2, 20)
+	mar := civilDate(2027, 3, 20)
+	k1 := jalaliMonthKey(feb)
+	k2 := jalaliMonthKey(mar)
+	if k1 != k2 {
+		t.Fatalf("expected Esfand collision, got %s vs %s", k1, k2)
+	}
+}
+
+func TestJalaliMonthlyOnePerMonth(t *testing.T) {
+	first := civilDate(2026, 9, 20) // 29 Shahrivar 1405
+	day := jalaliDayOf(first)
+	if day != 29 {
+		t.Fatalf("jalali day=%d want 29", day)
+	}
+	dates := datesFromFirst(first, day, 18)
+	seen := map[string]bool{}
+	for i, dt := range dates {
+		key := jalaliMonthKey(dt)
+		if seen[key] {
+			t.Fatalf("duplicate jalali month %s at %d (%s)", key, i, dt.UTC().Format("2006-01-02"))
+		}
+		seen[key] = true
+		y, m, d := dateYMD(dt)
+		jy, jm, jd := gregorianToJalali(y, m, d)
+		want := day
+		if want > jalaliMonthLen(jy, jm) {
+			want = jalaliMonthLen(jy, jm)
+		}
+		if jd != want {
+			t.Fatalf("inst %d %s jalali day=%d want %d", i, dt.UTC().Format("2006-01-02"), jd, want)
+		}
+	}
+}
+
+func TestPriorMarkAllFutureStaysPending(t *testing.T) {
+	today := "2026-09-28"
+	left := 12
+	paid := 0
+	first := civilDate(2026, 10, 8)
+	for i := 0; i < 12; i++ {
+		if priorMark(addJalaliMonths(first, i), today, &left) {
+			paid++
+		}
+	}
+	if paid != 0 {
+		t.Fatalf("future schedule marked paid=%d want 0", paid)
+	}
+	if left != 12 {
+		t.Fatalf("prepaid consumed=%d", 12-left)
+	}
+}

@@ -97,6 +97,40 @@ func civilDate(y, m, d int) time.Time {
 	return time.Date(y, time.Month(m), d, 12, 0, 0, 0, time.UTC)
 }
 
+func tehranTodayISO() string {
+	n := time.Now().In(tehran())
+	return fmt.Sprintf("%04d-%02d-%02d", n.Year(), int(n.Month()), n.Day())
+}
+
+func jalaliDate(jy, jm, jd int) time.Time {
+	if jm < 1 {
+		jm = 1
+	}
+	if jm > 12 {
+		jm = 12
+	}
+	last := jalaliMonthLen(jy, jm)
+	if jd > last {
+		jd = last
+	}
+	if jd < 1 {
+		jd = 1
+	}
+	gy, gm, gd := jalaliToGregorian(jy, jm, jd)
+	return civilDate(gy, gm, gd)
+}
+
+func jalaliYearMonth(t time.Time) (jy, jm int) {
+	y, m, d := dateYMD(t)
+	jy, jm, _ = gregorianToJalali(y, m, d)
+	return
+}
+
+func jalaliMonthKey(t time.Time) string {
+	jy, jm := jalaliYearMonth(t)
+	return fmt.Sprintf("%d-%02d", jy, jm)
+}
+
 func dateYMD(t time.Time) (y, m, d int) {
 	t = t.In(tehran())
 	return t.Year(), int(t.Month()), t.Day()

@@ -30,6 +30,9 @@ func main() {
 	defer database.Close()
 
 	st := store.New(database)
+	if err := st.RepairJalaliSchedules(context.Background()); err != nil {
+		log.Fatalf("repair schedules: %v", err)
+	}
 	var tg api.TelegramSender
 	if bot := notify.Start(context.Background(), st, os.Getenv("TELEGRAM_BOT_TOKEN")); bot != nil {
 		tg = bot
